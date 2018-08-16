@@ -683,7 +683,7 @@ typedef struct r_anal_t {
 #if R_ANAL_CLASSES_SDB
 	Sdb *sdb_classes;
 #else
-	RVector classes;
+	RPVector classes;
 #endif
 	//RList *hints; // XXX use better data structure here (slist?)
 	RAnalCallbacks cb;
@@ -1154,7 +1154,7 @@ typedef struct r_anal_class_t {
 	ut64 addr;
 	ut64 vtable_addr;
 	RVector base_classes; // <RAnalBaseClass>
-	RVector methods; // <RAnalMethod>
+	RPVector methods; // <RAnalMethod>
 } RAnalClass;
 
 typedef int (*RAnalEsilOp)(RAnalEsil *esil);
