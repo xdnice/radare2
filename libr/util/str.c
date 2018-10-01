@@ -300,7 +300,7 @@ R_API char *r_str_home(const char *str) {
 	if (str) {
 		length += strlen (R_SYS_DIR) + strlen (str);
 	}
-	dst = (char *)malloc (length);
+	dst = (char *)r_malloc (length);
 	if (!dst) {
 		goto fail;
 	}
@@ -502,7 +502,7 @@ R_API char *r_str_word_get0set(char *stra, int stralen, int idx, const char *new
 	}
 	if (!p) {
 		int nslen = strlen (newstr);
-		out = malloc (nslen + 1);
+		out = r_malloc (nslen + 1);
 		if (!out) {
 			return NULL;
 		}
@@ -519,7 +519,7 @@ R_API char *r_str_word_get0set(char *stra, int stralen, int idx, const char *new
 		blen = 0;
 	}
 	nlen = alen + blen + strlen (newstr);
-	out = malloc (nlen + 2);
+	out = r_malloc (nlen + 2);
 	if (!out) {
 		return NULL;
 	}
@@ -676,11 +676,10 @@ R_API char *r_str_new(const char *str) {
 // Returns a new heap-allocated copy of str, sets str[len] to '\0'.
 // If the input str is longer than len, it will be truncated.
 R_API char *r_str_newlen(const char *str, int len) {
-	char *buf;
 	if (len < 1) {
 		return NULL;
 	}
-	buf = malloc (len + 1);
+	char *buf = r_malloc (len + 1);
 	if (!buf) {
 		return NULL;
 	}
@@ -795,7 +794,7 @@ R_API char *r_str_word_get_first(const char *text) {
 	}
 	/* strdup */
 	len = strlen (text);
-	ret = (char *)malloc (len + 1);
+	ret = (char *)r_malloc (len + 1);
 	if (!ret) {
 		eprintf ("Cannot allocate %d byte(s).\n", len+1);
 		return NULL;
@@ -817,7 +816,7 @@ R_API char *r_str_ndup(const char *ptr, int len) {
 	if (len < 0) {
 		return NULL;
 	}
-	char *out = malloc (len + 1);
+	char *out = r_malloc (len + 1);
 	if (!out) {
 		return NULL;
 	}
@@ -834,7 +833,7 @@ R_API char *r_str_dup(char *ptr, const char *string) {
 		return NULL;
 	}
 	len = strlen (string)+1;
-	ptr = malloc (len+1);
+	ptr = r_malloc (len + 1);
 	if (!ptr) {
 		return NULL;
 	}
@@ -846,7 +845,7 @@ R_API void r_str_writef(int fd, const char *fmt, ...) {
 	char *buf;
 	va_list ap;
 	va_start (ap, fmt);
-	if ((buf = malloc (4096)) != NULL) {
+	if ((buf = r_malloc (4096)) != NULL) {
 		vsnprintf (buf, 4096, fmt, ap);
 		r_str_write (fd, buf);
 		free (buf);
@@ -911,7 +910,7 @@ R_API char *r_str_appendf(char *ptr, const char *fmt, ...) {
 	va_start (ap, fmt);
 	ret = vsnprintf (string, sizeof (string), fmt, ap);
 	if (ret >= sizeof (string)) {
-		char *p = malloc (ret + 2);
+		char *p = r_malloc (ret + 2);
 		if (!p) {
 			va_end (ap);
 			return NULL;
@@ -1218,7 +1217,7 @@ static char *r_str_escape_(const char *buf, int dot_nl, bool parse_esc_seq, bool
 	}
 	/* Worst case scenario, we convert every byte to a single-char escape
 	 * (e.g. \n) if show_asciidot, or \xhh if !show_asciidot */
-	new_buf = malloc (1 + strlen (buf) * (show_asciidot ? 2 : 4));
+	new_buf = r_malloc (1 + strlen (buf) * (show_asciidot ? 2 : 4));
 	if (!new_buf) {
 		return NULL;
 	}
@@ -1300,7 +1299,7 @@ static char *r_str_escape_utf(const char *buf, int buf_size, RStrEnc enc, bool s
 		end = buf + len;
 	}
 	/* Worst case scenario, we convert every byte to \xhh */
-	new_buf = malloc (1 + (len * 4));
+	new_buf = r_malloc (1 + (len * 4));
 	if (!new_buf) {
 		return NULL;
 	}
@@ -1531,7 +1530,7 @@ R_API int r_str_ansi_filter(char *str, char **out, int **cposs, int len) {
 	if (len < 0) {
 		len = strlen (str);
 	}
-	tmp = malloc (len + 1);
+	tmp = r_malloc (len + 1);
 	if (!tmp) {
 		return -1;
 	}
@@ -1587,7 +1586,7 @@ R_API char *r_str_ansi_crop(const char *str, ut32 x, ut32 y, ut32 x2, ut32 y2) {
 		s++;
 	}
 	r_len = str_len + nr_of_lines * strlen (Color_RESET) + 1;
-	r = ret = malloc (r_len);
+	r = ret = r_malloc (r_len);
 	if (!r) {
 		return NULL;
 	}
@@ -1777,7 +1776,7 @@ R_API char *r_str_arg_escape(const char *arg) {
 	if (!arg) {
 		return NULL;
 	}
-	str = malloc ((2 * strlen (arg) + 1) * sizeof (char)); // Worse case when every character need to be escaped
+	str = r_malloc ((2 * strlen (arg) + 1) * sizeof (char)); // Worse case when every character need to be escaped
 	if (!str) {
 		return NULL;
 	}
@@ -1812,11 +1811,11 @@ R_API char **r_str_argv(const char *cmdline, int *_argc) {
 		return NULL;
 	}
 
-	char **argv = malloc (argv_len * sizeof (char *));
+	char **argv = r_malloc (argv_len * sizeof (char *));
 	if (!argv) {
 		return NULL;
 	}
-	args = malloc (128 + strlen (cmdline) * sizeof (char)); // Unescaped args will be shorter, so strlen (cmdline) will be enough
+	args = r_malloc (128 + strlen (cmdline) * sizeof (char)); // Unescaped args will be shorter, so strlen (cmdline) will be enough
 	if (!args) {
 		free (argv);
 		return NULL;
@@ -2125,7 +2124,7 @@ R_API char *r_str_uri_encode(const char *s) {
 	if (!s) {
 		return NULL;
 	}
-	od = d = malloc (1 + (strlen (s) * 4));
+	od = d = r_malloc (1 + (strlen (s) * 4));
 	if (!d) {
 		return NULL;
 	}
@@ -2266,7 +2265,7 @@ R_API char *r_str_utf16_encode(const char *s, int len) {
 	if ((len * 7) + 1 < len) {
 		return NULL;
 	}
-	od = d = malloc (1 + (len * 7));
+	od = d = r_malloc (1 + (len * 7));
 	if (!d) {
 		return NULL;
 	}
@@ -2450,7 +2449,7 @@ R_API char *r_str_prefix_all(const char *s, const char *pfx) {
 			newlines++;
 		}
 	}
-	char *o = malloc (len + (pfx_len * newlines) + 1);
+	char *o = r_malloc (len + (pfx_len * newlines) + 1);
 	if (!o) {
 		return NULL;
 	}
@@ -2695,7 +2694,7 @@ R_API const char *r_str_const_at(char ***consts, const char *ptr) {
 		}
 		*consts = res;
 	} else {
-		*consts = malloc (sizeof (void*) * 2);
+		*consts = r_calloc (sizeof (void*) * 2);
 		if (!*consts) {
 			return NULL;
 		}
