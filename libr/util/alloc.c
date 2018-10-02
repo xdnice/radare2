@@ -2,6 +2,7 @@
 
 #include <r_util/r_alloc.h>
 
+#if R_MALLOC_WRAPPER
 static RMalloc *_r_malloc = malloc;
 static RCalloc *_r_calloc = calloc;
 static RRealloc *_r_realloc = realloc;
@@ -36,3 +37,4 @@ R_API void *r_realloc(void *p, size_t sz) {
 R_API void r_free(void *p) {
 	return _r_free? _r_free (p): free (p);
 }
+#endif
