@@ -2393,10 +2393,11 @@ static void cmd_print_pv(RCore *core, const char *input, const ut8* block) {
 		// r_num_get is gonna use a dangling pointer since the internal
 		// token that RNum holds ([$$]) has been already freed by r_core_cmd_str
 		// r_num_math reload a new token so the dangling pointer is gone
-		r_cons_printf ("{\"value\":%"PFMT64u ",\"string\":\"%s\"}\n",
-			r_num_math (core->num, "[$$]"),
-			str
-			);
+		RPrintJSON *j = r_print_json_begin ('{', r_cons_printf);
+		r_print_json_kn (j, "value", r_num_math (core->num, "[$$]"));
+		r_print_json_ks (j, "string", str);
+		r_print_json_end (j); // the object is freed here
+
 		free (str);
 		break;
 	}
