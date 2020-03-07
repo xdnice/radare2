@@ -5,8 +5,11 @@ EXTRA_TARGETS+=${SDBLIB}
 SDB_OBJS=
 SDB_OBJS+=buffer.o
 SDB_OBJS+=cdb.o
+SDB_OBJS+=set.o
 SDB_OBJS+=cdb_make.o
-SDB_OBJS+=ht.o
+SDB_OBJS+=ht_uu.o
+SDB_OBJS+=ht_up.o
+SDB_OBJS+=ht_pp.o
 SDB_OBJS+=sdbht.o
 SDB_OBJS+=json.o
 SDB_OBJS+=lock.o
@@ -23,6 +26,7 @@ SDB_OBJS+=match.o
 SDB_OBJS+=num.o
 SDB_OBJS+=util.o
 SDB_OBJS+=journal.o
+SDB_OBJS+=diff.o
 
 SDBOBJS=$(addprefix ${SDBPATH},${SDB_OBJS})
 

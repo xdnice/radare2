@@ -7,7 +7,7 @@
 #include <r_lib.h>
 
 static int disassemble(RAsm *as, RAsmOp *op, const ut8 *buf, int len) {
-	struct lh5801_insn insn;
+	struct lh5801_insn insn = {0};
 	if (!op) {
 		return 0;
 	}
@@ -36,7 +36,7 @@ RAsmPlugin r_asm_plugin_lh5801 = {
 	.disassemble = &disassemble
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ASM,
 	.data = &r_asm_plugin_lh5801,

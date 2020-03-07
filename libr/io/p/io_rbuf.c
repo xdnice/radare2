@@ -12,12 +12,12 @@ static int __write(RIO *io, RIODesc *fd, const ut8 *buf, int count) {
 		return -1;
 	}
 	RBuffer *b = fd->data;
-	return r_buf_write_at (b, b->cur, buf, count);
+	return r_buf_write (b, buf, count);
 }
 
 static int __read(RIO *io, RIODesc *fd, ut8 *buf, int count) {
 	RBuffer *b = fd->data;
-	return r_buf_read_at (b, b->cur, buf, count);
+	return r_buf_read (b, buf, count);
 }
 
 static int __close(RIODesc *fd) {
@@ -47,7 +47,8 @@ static RIODesc *__open(RIO *io, const char *pathname, int rw, int mode) {
 
 RIOPlugin r_io_plugin_rbuf = {
 	.name = "rbuf",
-	.desc = "RBuffer IO plugin: rbuf://",
+	.desc = "RBuffer IO plugin",
+	.uris = "rbuf://",
 	.license = "LGPL",
 	.open = __open,
 	.close = __close,
@@ -57,7 +58,7 @@ RIOPlugin r_io_plugin_rbuf = {
 	.check = __check
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_IO,
 	.data = &r_io_plugin_rbuf,

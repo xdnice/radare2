@@ -986,8 +986,7 @@ static void free_tpi_stream(void *stream) {
 			type->type_data.free_ = 0;
 			type->type_data.type_info = 0;
 		}
-		free (type);
-		type = NULL;
+		R_FREE (type);
 	}
 	r_list_free (tpi_stream->types);
 }
@@ -1583,7 +1582,7 @@ static int parse_sval(SVal *val, unsigned char *leaf_data, unsigned int *read_by
 		case eLF_CHAR:
 		{
 			SVal_LF_CHAR lf_char;
-			READ2(*read_bytes, len, lf_char.value, leaf_data, st16);
+			READ1(*read_bytes, len, lf_char.value, leaf_data, st8);
 			parse_sctring (&lf_char.name, leaf_data, read_bytes, len);
 			val->name_or_val = malloc (sizeof (SVal_LF_CHAR));
 			if (!val->name_or_val) {
@@ -1612,8 +1611,8 @@ static int parse_sval(SVal *val, unsigned char *leaf_data, unsigned int *read_by
 		{
 			SVal_LF_ULONG lf_ulong;
 			lf_ulong.value = 0;
-			// unsinged long = 4 bytes for Windows, but not in Linux x64,
-			// so here is using unsinged int instead of unsigned long when
+			// unsigned long = 4 bytes for Windows, but not in Linux x64,
+			// so here is using unsigned int instead of unsigned long when
 			// reading ulong value
 			READ4(*read_bytes, len, lf_ulong.value, leaf_data, ut32);
 			parse_sctring (&lf_ulong.name, leaf_data, read_bytes, len);
@@ -1957,7 +1956,7 @@ static int parse_lf_fieldlist(SLF_FIELDLIST *lf_fieldlist,  unsigned char *leaf_
 	int curr_read_bytes = 0;
 	unsigned char *p = leaf_data;
 
-	lf_fieldlist->substructs = r_list_new();
+	lf_fieldlist->substructs = r_list_new ();
 
 	while (*read_bytes <= len) {
 		READ2(*read_bytes, len, leaf_type, p, ut16);
@@ -2352,7 +2351,7 @@ int parse_tpi_stream(void *parsed_pdb_stream, R_STREAM_FILE *stream) {
 	int i;
 	SType *type = 0;
 	STpiStream *tpi_stream = (STpiStream *) parsed_pdb_stream;
-	tpi_stream->types = r_list_new();
+	tpi_stream->types = r_list_new ();
 	p_types_list = tpi_stream->types;
 
 	stream_file_read(stream, sizeof(STPIHeader), (char *)&tpi_stream->header);

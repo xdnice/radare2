@@ -1,11 +1,8 @@
-/* radare - LGPL - Copyright 2006-2014 - esteve, pancake */
+/* radare - LGPL - Copyright 2006-2019 - esteve, pancake */
 
-#include "r_search.h"
-#include "r_print.h"
-
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
+#include <r_search.h>
+#include <r_util.h>
+#include <r_util/r_print.h>
 
 #define CTXMINB 5
 #define BSIZE (1024*1024)

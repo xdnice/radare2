@@ -46,9 +46,9 @@ typedef struct _pic_midrange_op_anal_info {
 #define PIC_MIDRANGE_ESIL_OPTION_ADDR "0x95,_sram,+"
 
 #define PIC_MIDRANGE_ESIL_UPDATE_FLAGS                                       \
-	"$z,z,=,"                                                            \
-	"$c7,c,=,"                                                           \
-	"$c4,dc,=,"
+	"$z,z,:=,"                                                            \
+	"7,$c,c,:=,"                                                           \
+	"4,$c,dc,:=,"
 
 #define PIC_MIDRANGE_ESIL_LW_OP(O)                                           \
 	"0x%x,wreg," #O "=," PIC_MIDRANGE_ESIL_UPDATE_FLAGS
@@ -217,7 +217,7 @@ INST_HANDLER (INCF) {
 		ef ("0x01," PIC_MIDRANGE_ESIL_BSR_ADDR ",[1],+,wreg,=,",
 		    args->f);
 	}
-	e ("$z,z,=,");
+	e ("$z,z,:=,");
 }
 
 INST_HANDLER (DECF) {
@@ -228,7 +228,7 @@ INST_HANDLER (DECF) {
 		ef ("0x01," PIC_MIDRANGE_ESIL_BSR_ADDR ",[1],-,wreg,=,",
 		    args->f);
 	}
-	e ("$z,z,=,");
+	e ("$z,z,:=,");
 }
 
 INST_HANDLER (IORWF) {
@@ -339,7 +339,7 @@ INST_HANDLER (MOVF) {
 	} else {
 		ef (PIC_MIDRANGE_ESIL_BSR_ADDR, ",[1],wreg,=,", args->f);
 	}
-	e ("$z,z,=,");
+	e ("$z,z,:=,");
 }
 
 INST_HANDLER (SWAPF) {
@@ -358,7 +358,7 @@ INST_HANDLER (LSLF) {
 		ef ("1," PIC_MIDRANGE_ESIL_BSR_ADDR ",[1],<<,wreg,=,",
 		    args->f);
 	}
-	e ("$z,z,=,");
+	e ("$z,z,:=,");
 }
 
 INST_HANDLER (LSRF) {
@@ -370,7 +370,7 @@ INST_HANDLER (LSRF) {
 		ef ("1," PIC_MIDRANGE_ESIL_BSR_ADDR ",[1],>>,wreg,=,",
 		    args->f);
 	}
-	e ("$z,z,=,");
+	e ("$z,z,:=,");
 }
 
 INST_HANDLER (ASRF) {
@@ -383,7 +383,7 @@ INST_HANDLER (ASRF) {
 	} else {
 		e ("|,wreg,=,");
 	}
-	e ("$z,z,=,");
+	e ("$z,z,:=,");
 }
 
 INST_HANDLER (RRF) {
@@ -422,7 +422,7 @@ INST_HANDLER (COMF) {
 	} else {
 		ef ("0xff," PIC_MIDRANGE_ESIL_BSR_ADDR ",^,wreg,=,", args->f);
 	}
-	e ("$z,z,=,");
+	e ("$z,z,:=,");
 }
 
 INST_HANDLER (RESET) {
@@ -436,10 +436,10 @@ INST_HANDLER (ADDFSR) {
 	op->type = R_ANAL_OP_TYPE_ADD;
 	if (args->n == 0) {
 		ef ("0x%x,fsr0l,+=,", args->k);
-		e ("$c7,?{,0x01,fsr0h,+=,},");
+		e ("7,$c,?{,0x01,fsr0h,+=,},");
 	} else {
 		ef ("0x%x,fsr1l,+=,", args->k);
-		e ("$c7,?{,0x01,fsr1h,+=,},");
+		e ("7,$c,?{,0x01,fsr1h,+=,},");
 	}
 }
 
@@ -477,27 +477,27 @@ INST_HANDLER (MOVIW_1) {
 	if (args->n == 0) {
 		if (!(args->m & 2)) {
 			ef ("1,fsr0l,%s=,", (args->m & 1) ? "-" : "+");
-			ef ("$c7%s,fsr0h,%s,", (args->m & 1) ? ",!" : "",
+			ef ("7,$c%s,fsr0h,%s,", (args->m & 1) ? ",!" : "",
 			    (args->m & 1) ? "-" : "+");
 		}
 		e ("indf0,wreg,=,");
-		e ("$z,z,=,");
+		e ("$z,z,:=,");
 		if (args->m & 2) {
 			ef ("1,fsr0l,%s=,", (args->m & 1) ? "-" : "+");
-			ef ("$c7%s,fsr0h,%s,", (args->m & 1) ? ",!" : "",
+			ef ("7,$c%s,fsr0h,%s,", (args->m & 1) ? ",!" : "",
 			    (args->m & 1) ? "-" : "+");
 		}
 	} else {
 		if (!(args->m & 2)) {
 			ef ("1,fsr1l,%s=,", (args->m & 1) ? "-" : "+");
-			ef ("$c7%s,fsr1h,%s,", (args->m & 1) ? ",!" : "",
+			ef ("7,$c%s,fsr1h,%s,", (args->m & 1) ? ",!" : "",
 			    (args->m & 1) ? "-" : "+");
 		}
 		e ("indf1,wreg,=,");
-		e ("$z,z,=,");
+		e ("$z,z,:=,");
 		if (args->m & 2) {
 			ef ("1,fsr1l,%s=,", (args->m & 1) ? "-" : "+");
-			ef ("$c7%s,fsr1h,%s,", (args->m & 1) ? ",!" : "",
+			ef ("7,$c%s,fsr1h,%s,", (args->m & 1) ? ",!" : "",
 			    (args->m & 1) ? "-" : "+");
 		}
 	}
@@ -511,7 +511,7 @@ INST_HANDLER (MOVWI_1) {
 			    (args->m & 1) ? "-" : "+");
 		}
 		e ("wreg,indf0=,");
-		e ("$z,z,=,");
+		e ("$z,z,:=,");
 		if (args->m & 2) {
 			ef ("1,fsr0l,%s=,", (args->m & 1) ? "-" : "+");
 			ef ("$c7%s,fsr0h,%s,", (args->m & 1) ? ",!" : "",
@@ -524,7 +524,7 @@ INST_HANDLER (MOVWI_1) {
 			    (args->m & 1) ? "-" : "+");
 		}
 		e ("wreg,indf1=,");
-		e ("$z,z,=,");
+		e ("$z,z,:=,");
 		if (args->m & 2) {
 			ef ("1,fsr1l,%s=,", (args->m & 1) ? "-" : "+");
 			ef ("$c7%s,fsr1h,%s,", (args->m & 1) ? ",!" : "",
@@ -727,7 +727,7 @@ static void pic18_cond_branch (RAnalOp *op, ut64 addr, const ut8 *buf, char *fla
 }
 
 static int anal_pic_pic18_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
-	//TODO code should be refactored and brocken into smaller chuncks!!
+	//TODO code should be refactored and broken into smaller chunks!!
 	//TODO complete the esil emitter
 	if (len < 2) {
 		op->size = len;
@@ -735,12 +735,14 @@ static int anal_pic_pic18_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf
 	}
 	op->size = 2;
 	ut16 b = *(ut16 *)buf;
+	ut32 dword_instr = 0;
+	memcpy (&dword_instr, buf, R_MIN (sizeof (dword_instr), len));
 	switch (b >> 9) {
 	case 0x76: //call
 		if (len < 4) {
 			goto beach;
 		}
-		if (*(ut32 *)buf >> 28 != 0xf) {
+		if (dword_instr >> 28 != 0xf) {
 			goto beach;
 		}
 		op->size = 4;
@@ -768,7 +770,7 @@ static int anal_pic_pic18_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf
 		if (len < 4) {
 			goto beach;
 		}
-		if (*(ut32 *)buf >> 28 != 0xf) {
+		if (dword_instr >> 28 != 0xf) {
 			goto beach;
 		}
 		op->size = 4;
@@ -814,12 +816,11 @@ static int anal_pic_pic18_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf
 		if (len < 4) {
 			goto beach;
 		}
-		if (*(ut32 *)buf >> 28 != 0xf) {
+		if (dword_instr >> 28 != 0xf) {
 			goto beach;
 		}
 		op->size = 4;
 		op->cycles = 2;
-		ut32 dword_instr = *(ut32 *)buf;
 		op->jump = ((dword_instr & 0xff) | ((dword_instr & 0xfff0000) >> 8)) * 2;
 		r_strbuf_setf (&op->esil, "0x%x,pc,=", op->jump);
 		op->type = R_ANAL_OP_TYPE_JMP;
@@ -828,7 +829,7 @@ static int anal_pic_pic18_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf
 		op->type = R_ANAL_OP_TYPE_ADD;
 		op->cycles = 1;
 		//TODO add support for dc flag
-		r_strbuf_setf (&op->esil, "0x%x,wreg,+=,$z,z,=,$s,n,=,$c,c,=,$o,ov,=,", *(ut16 *)buf & 0xff);
+		r_strbuf_setf (&op->esil, "0x%x,wreg,+=,$z,z,:=,7,$s,n,:=,7,$c,c,:=,7,$o,ov,:=,", *(ut16 *)buf & 0xff);
 		return op->size;
 	case 0xe: //movlw
 		op->type = R_ANAL_OP_TYPE_LOAD;
@@ -848,23 +849,23 @@ static int anal_pic_pic18_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf
 	case 0xb: //andlw
 		op->type = R_ANAL_OP_TYPE_AND;
 		op->cycles = 1;
-		r_strbuf_setf (&op->esil, "0x%x,wreg,&=,$z,z,=,$s,n,=,", *(ut16 *)buf & 0xff);
+		r_strbuf_setf (&op->esil, "0x%x,wreg,&=,$z,z,:=,7,$s,n,:=,", *(ut16 *)buf & 0xff);
 		return op->size;
 	case 0xa: //xorlw
 		op->type = R_ANAL_OP_TYPE_XOR;
 		op->cycles = 1;
-		r_strbuf_setf (&op->esil, "0x%x,wreg,^=,$z,z,=,$s,n,=,", *(ut16 *)buf & 0xff);
+		r_strbuf_setf (&op->esil, "0x%x,wreg,^=,$z,z,:=,7,$s,n,:=,", *(ut16 *)buf & 0xff);
 		return op->size;
 	case 0x9: //iorlw
 		op->type = R_ANAL_OP_TYPE_OR;
 		op->cycles = 1;
-		r_strbuf_setf (&op->esil, "0x%x,wreg,^=,$z,z,=,$s,n,=,", *(ut16 *)buf & 0xff);
+		r_strbuf_setf (&op->esil, "0x%x,wreg,^=,$z,z,:=,7,$s,n,:=,", *(ut16 *)buf & 0xff);
 		return op->size;
 	case 0x8: //sublw
 		op->type = R_ANAL_OP_TYPE_SUB;
 		op->cycles = 1;
 		//TODO add support for dc flag
-		r_strbuf_setf (&op->esil, "wreg,0x%x,-,wreg,=,$z,z,=,$s,n,=,$c,c,=,$o,ov,=,", *(ut16 *)buf & 0xff);
+		r_strbuf_setf (&op->esil, "wreg,0x%x,-,wreg,=,$z,z,:=,7,$s,n,:=,7,$c,c,:=,7,$o,ov,:=,", *(ut16 *)buf & 0xff);
 		return op->size;
 	};
 
@@ -873,7 +874,7 @@ static int anal_pic_pic18_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf
 		if (len < 4) {
 			goto beach;
 		}
-		if (*(ut32 *)buf >> 28 != 0xf) {
+		if (dword_instr >> 28 != 0xf) {
 			goto beach;
 		}
 		op->size = 4;
@@ -1046,7 +1047,7 @@ static int anal_pic_pic18_set_reg_profile(RAnal *esil) {
 		"#bsr max is 0b111\n"
 		"gpr	bsr	.8	4	0\n"
 		"#tos doesn't exist\n"
-		"#general rule of thumb any register of size >8 bits has no existance\n"
+		"#general rule of thumb any register of size >8 bits has no existence\n"
 		"gpr	tos	.32	5	0\n"
 		"gpr	tosl	.8	5	0\n"
 		"gpr	tosh	.8	6	0\n"
@@ -1152,7 +1153,7 @@ static int anal_pic_pic18_set_reg_profile(RAnal *esil) {
 }
 
 
-static int anal_pic_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
+static int anal_pic_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len, RAnalOpMask mask) {
 	if (anal->cpu && strcasecmp (anal->cpu, "baseline") == 0) {
 		// TODO: implement
 		return -1;
@@ -1168,8 +1169,8 @@ static int anal_pic_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int 
 
 static int anal_pic_set_reg_profile(RAnal *anal) {
 	if (anal->cpu && strcasecmp (anal->cpu, "baseline") == 0) {
-		// TODO: implement
-		return r_reg_set_profile_string (anal->reg, "");
+		// TODO: We are using the midrange profile as the baseline
+		return anal_pic_midrange_set_reg_profile (anal);
 	}
 	if (anal->cpu && strcasecmp (anal->cpu, "midrange") == 0) {
 		return anal_pic_midrange_set_reg_profile (anal);
@@ -1191,7 +1192,7 @@ RAnalPlugin r_anal_plugin_pic = {
 	.esil = true
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_pic,

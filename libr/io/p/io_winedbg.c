@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2017-2018 - pancake */
+/* radare - LGPL - Copyright 2017-2019 - pancake */
 
 #include "r_types_base.h"
 #include "r_io.h"
@@ -36,7 +36,7 @@ static char *runcmd (const char *cmd) {
 	}
 	int timeout = 1000000;
 	char *str = NULL;
-	r_socket_block_time (gs, 1, timeout);
+	r_socket_block_time (gs, 1, timeout, 0);
 	while (true) {
 		memset (buf, 0, sizeof (buf));
 		r_socket_read (gs, (ut8*)buf, sizeof (buf) - 1); // NULL-terminate the string always
@@ -141,13 +141,14 @@ static int __close(RIODesc *fd) {
 
 static ut64 __lseek(RIO *io, RIODesc *fd, ut64 offset, int whence) {
 	switch (whence) {
-	case SEEK_SET:
+	case R_IO_SEEK_SET:
 		io->off = offset;
-		return offset;
-	case SEEK_CUR:
-		return io->off + offset;
-	case SEEK_END:
-		return UT64_MAX;
+		break;
+	case R_IO_SEEK_CUR:
+		io->off += offset;
+		break;
+	case R_IO_SEEK_END:
+		io->off = ST64_MAX;
 	}
 	io->off = offset;
 	return offset;
@@ -224,6 +225,9 @@ static struct winedbg_x86_32 regState() {
 }
 
 static char *__system(RIO *io, RIODesc *fd, const char *cmd) {
+	if (!strcmp (cmd, "")) {
+		return NULL;
+	}
 	if (!strncmp (cmd, "?", 1)) {
 		eprintf ("dr  : show registers\n");
 		eprintf ("dr* : show registers as flags\n");
@@ -236,7 +240,7 @@ static char *__system(RIO *io, RIODesc *fd, const char *cmd) {
 		eprintf ("pid : show current process id\n");
 	} else if (!strncmp (cmd, "dr8", 3)) {
 		struct winedbg_x86_32 r = regState ();
-		ut8 *arena = (ut8*)calloc (sizeof (struct winedbg_x86_32), 3);
+		ut8 *arena = (ut8*)calloc (3, sizeof (struct winedbg_x86_32));
 		if (arena) {
 			r_hex_bin2str ((ut8*)&r, sizeof (r), (char *)arena);
 			return (char *)arena;
@@ -308,7 +312,7 @@ const char *msg =
 	} else if (!strncmp (cmd, "dr", 2)) {
 		printcmd (io, "info reg");
 	} else if (!strncmp (cmd, "db ", 3)) {
-		free (runcmd (sdb_fmt ("break *%"PFMT64x, r_num_get (NULL, cmd + 3) || io->off)));
+		free (runcmd (sdb_fmt ("break *%x", r_num_get (NULL, cmd + 3) || io->off)));
 	} else if (!strncmp (cmd, "ds", 2)) {
 		free (runcmd ("stepi"));
 	} else if (!strncmp (cmd, "dc", 2)) {
@@ -357,19 +361,20 @@ const char *msg =
 
 RIOPlugin r_io_plugin_winedbg = {
 	.name = "winedbg",
-        .desc = "Wine-dbg io and debug.io plugin for r2",
+	.desc = "Wine-dbg io and debug.io plugin",
+	.uris = "winedbg://",
 	.license = "MIT",
-        .open = __open,
-        .close = __close,
+	.open = __open,
+	.close = __close,
 	.read = __read,
-        .check = __plugin_open,
+	.check = __plugin_open,
 	.lseek = __lseek,
 	.write = __write,
 	.system = __system,
 	.isdbg = true
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_IO,
 	.data = &r_io_plugin_winedbg,

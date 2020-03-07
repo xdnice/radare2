@@ -4,7 +4,7 @@
 #include <r_types.h>
 #include <string.h>
 #include <stdlib.h>
-#if __WINDOWS__ && !__CYGWIN__
+#if __WINDOWS__
 #include <search.h>
 #endif
 
@@ -110,9 +110,8 @@ static bool oid_storage_preallocate(ROIDStorage *st, ut32 size) {
 		return false;
 	}
 	if (!size) {
-		free (st->permutation);
+		R_FREE (st->permutation);
 		st->psize = 0;
-		st->permutation = NULL;
 	}
 	permutation = realloc (st->permutation, size * sizeof (ut32));
 	if (!permutation) {
@@ -295,6 +294,9 @@ R_API bool r_oids_add(ROIDStorage *storage, void *data, ut32 *id, ut32 *od) {
 	}
 	if (storage->psize <= storage->ptop) {
 		r_id_storage_delete (storage->data, *id);
+		return false;
+	}
+	if (!storage->permutation) {
 		return false;
 	}
 	*od = storage->ptop;

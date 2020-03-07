@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2018 - pancake */
+/* radare - LGPL - Copyright 2009-2019 - pancake */
 
 #include <r_reg.h>
 #include <r_util.h>
@@ -31,6 +31,7 @@ static ut64 parse_size(char *s, char **end) {
 	return strtoul (s, end, 0) << 3;
 }
 
+//TODO: implement R_API bool r_reg_set_def_string()
 static const char *parse_def(RReg *reg, char **tok, const int n) {
 	char *end;
 	int type, type2;
@@ -56,11 +57,13 @@ static const char *parse_def(RReg *reg, char **tok, const int n) {
 	if (type < 0 || type2 < 0) {
 		return "Invalid register type";
 	}
+#if 1
 	if (r_reg_get (reg, tok[1], R_REG_TYPE_ALL)) {
 		eprintf ("Ignoring duplicated register definition '%s'\n", tok[1]);
 		return NULL;
 		//return "Duplicate register definition";
 	}
+#endif
 
 	RRegItem *item = R_NEW0 (RRegItem);
 	if (!item) {
@@ -95,7 +98,12 @@ static const char *parse_def(RReg *reg, char **tok, const int n) {
 
 	// This is optional
 	if (n == 6) {
-		item->flags = strdup (tok[5]);
+		if (*tok[5] == '#') {
+			// Remove # from the comment
+			item->comment = strdup (tok[5] + 1);
+		} else {
+			item->flags = strdup (tok[5]);
+		}
 	}
 
 	item->arena = type2;
@@ -103,6 +111,10 @@ static const char *parse_def(RReg *reg, char **tok, const int n) {
 		reg->regset[type2].regs = r_list_newf ((RListFree)r_reg_item_free);
 	}
 	r_list_append (reg->regset[type2].regs, item);
+	if (!reg->regset[type2].ht_regs) {
+		reg->regset[type2].ht_regs = ht_pp_new0 ();
+	}
+	ht_pp_insert (reg->regset[type2].ht_regs, item->name, item);
 
 	// Update the overall profile size
 	if (item->offset + item->size > reg->size) {
@@ -114,15 +126,13 @@ static const char *parse_def(RReg *reg, char **tok, const int n) {
 }
 
 #define PARSER_MAX_TOKENS 8
-R_API int r_reg_set_profile_string(RReg *reg, const char *str) {
+R_API bool r_reg_set_profile_string(RReg *reg, const char *str) {
 	char *tok[PARSER_MAX_TOKENS];
 	char tmp[128];
 	int i, j, l;
 	const char *p = str;
 
-	if (!reg || !str) {
-		return false;
-	}
+	r_return_val_if_fail (reg && str, false);
 
 	// Same profile, no need to change
 	if (reg->reg_profile_str && !strcmp (reg->reg_profile_str, str)) {
@@ -162,20 +172,23 @@ R_API int r_reg_set_profile_string(RReg *reg, const char *str) {
 			while (*p == ' ' || *p == '\t') {
 				p++;
 			}
-			// Skip the rest of the line is a comment is encountered
-			if (*p == '#') {
-				while (*p != '\n') {
-					p++;
-				}
-			}
 			// EOL ?
 			if (*p == '\n') {
 				break;
 			}
-			// Gather a handful of chars
-			// Use isgraph instead of isprint because the latter considers ' ' printable
-			for (i = 0; isgraph ((const unsigned char)*p) && i < sizeof (tmp) - 1;) {
-				tmp[i++] = *p++;
+			if (*p == '#') {
+				// Place the rest of the line in the token if a comment is encountered
+				for (i = 0; *p != '\n'; p++) {
+					if (i < sizeof (tmp) - 1) {
+						tmp[i++] = *p;
+					}
+				}
+			} else {
+				// Save all characters up to a space/tab
+				// Use isgraph instead of isprint because the latter considers ' ' printable
+				for (i = 0; isgraph ((const unsigned char)*p) && i < sizeof (tmp) - 1;) {
+					tmp[i++] = *p++;
+				}
 			}
 			tmp[i] = '\0';
 			// Limit the number of tokens
@@ -212,7 +225,9 @@ R_API int r_reg_set_profile_string(RReg *reg, const char *str) {
 	for (i = 0; i < R_REG_TYPE_LAST; i++) {
 		RRegSet *rs = &reg->regset[i];
 		//eprintf ("* arena %s size %d\n", r_reg_get_type (i), rs->arena->size);
-		reg->size += rs->arena->size;
+		if (rs && rs->arena) {
+			reg->size += rs->arena->size;
+		}
 	}
 	// Align to byte boundary if needed
 	//if (reg->size & 7) {
@@ -227,8 +242,7 @@ R_API int r_reg_set_profile_string(RReg *reg, const char *str) {
 	return true;
 }
 
-R_API int r_reg_set_profile(RReg *reg, const char *profile) {
-	int ret;
+R_API bool r_reg_set_profile(RReg *reg, const char *profile) {
 	char *base, *file;
 	char *str = r_file_slurp (profile, NULL);
 	if (!str) {
@@ -243,12 +257,12 @@ R_API int r_reg_set_profile(RReg *reg, const char *profile) {
 		eprintf ("r_reg_set_profile: Cannot find '%s'\n", profile);
 		return false;
 	}
-	ret = r_reg_set_profile_string (reg, str);
+	bool ret = r_reg_set_profile_string (reg, str);
 	free (str);
 	return ret;
 }
 
-static int gdb_to_r2_profile(char *gdb) {
+static bool gdb_to_r2_profile(char *gdb) {
 	char *ptr = gdb, *ptr1, *gptr, *gptr1;
 	char name[16], groups[128], type[16];
 	const int all = 1, gpr = 2, save = 4, restore = 8, float_ = 16,
@@ -364,15 +378,14 @@ static int gdb_to_r2_profile(char *gdb) {
 	return true;
 }
 
-R_API int r_reg_parse_gdb_profile(const char *profile_file) {
-	char *base, *file, *str = NULL;
+R_API bool r_reg_parse_gdb_profile(const char *profile_file) {
+	char *base, *str = NULL;
 	if (!(str = r_file_slurp (profile_file, NULL))) {
 		if ((base = r_sys_getenv (R_LIB_ENV))) {
-			if ((file = r_str_append (base, profile_file))) {
+			char *file = r_str_append (base, profile_file);
+			if (file) {
 				str = r_file_slurp (file, NULL);
 				free (file);
-			} else {
-				free (base);
 			}
 		}
 	}
@@ -380,7 +393,7 @@ R_API int r_reg_parse_gdb_profile(const char *profile_file) {
 		eprintf ("r_reg_parse_gdb_profile: Cannot find '%s'\n", profile_file);
 		return false;
 	}
-	int ret = gdb_to_r2_profile (str);
+	bool ret = gdb_to_r2_profile (str);
 	free (str);
 	return ret;
 }

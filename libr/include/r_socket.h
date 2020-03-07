@@ -2,12 +2,13 @@
 #define R2_SOCKET_H
 
 /* Must be included before windows.h (r_types) */
-#if defined(__WINDOWS__) && !defined(__CYGWIN__) && !defined(MINGW32) && !defined(__MINGW64__)
+#if defined(__WINDOWS__)
 #include <ws2tcpip.h>
 #endif
 
 #include "r_types.h"
 #include "r_bind.h"
+#include "r_list.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,7 +16,7 @@ extern "C" {
 
 R_LIB_VERSION_HEADER (r_socket);
 
-#if __UNIX__ || __CYGWIN__ || __MINGW64__ && !defined(MINGW32)
+#if __UNIX__
 #include <netinet/in.h>
 #include <sys/un.h>
 #include <poll.h>
@@ -30,7 +31,7 @@ R_LIB_VERSION_HEADER (r_socket);
 #include <openssl/err.h>
 #endif
 
-#if __UNIX__ || defined(__CYGWIN__)
+#if __UNIX__
 #include <netinet/tcp.h>
 #endif
 
@@ -43,6 +44,13 @@ R_LIB_VERSION_HEADER (r_socket);
 #define SD_SEND 1
 #define SD_BOTH 2
 #endif
+
+#if _MSC_VER
+#define R_INVALID_SOCKET INVALID_SOCKET
+#else
+#define R_INVALID_SOCKET -1
+#endif
+
 typedef struct {
 	int child;
 #if __WINDOWS__
@@ -60,7 +68,8 @@ typedef struct r_socket_t {
 #else
 	int fd;
 #endif
-	int is_ssl;
+	bool is_ssl;
+	int proto;
 	int local;	// TODO: merge ssl with local -> flags/options
 	int port;
 	struct sockaddr_in sa;
@@ -71,30 +80,39 @@ typedef struct r_socket_t {
 #endif
 } RSocket;
 
+typedef struct r_socket_http_options {
+	RList *authtokens;
+	bool accept_timeout;
+	int timeout;
+	bool httpauth;
+} RSocketHTTPOptions;
+
+
 #define R_SOCKET_PROTO_TCP IPPROTO_TCP
 #define R_SOCKET_PROTO_UDP IPPROTO_UDP
 #define R_SOCKET_PROTO_UNIX 0x1337
 
 #ifdef R_API
 R_API RSocket *r_socket_new_from_fd(int fd);
-R_API RSocket *r_socket_new(int is_ssl);
+R_API RSocket *r_socket_new(bool is_ssl);
+R_API bool r_socket_spawn(RSocket *s, const char *cmd, unsigned int timeout);
 R_API bool r_socket_connect(RSocket *s, const char *host, const char *port, int proto, unsigned int timeout);
-R_API bool r_socket_spawn (RSocket *s, const char *cmd, unsigned int timeout);
 R_API int r_socket_connect_serial(RSocket *sock, const char *path, int speed, int parity);
 #define r_socket_connect_tcp(a, b, c, d) r_socket_connect (a, b, c, R_SOCKET_PROTO_TCP, d)
 #define r_socket_connect_udp(a, b, c, d) r_socket_connect (a, b, c, R_SOCKET_PROTO_UDP, d)
 #if __UNIX__
-#define r_socket_connect_unix(a, b) r_socket_connect (a, b, NULL, R_SOCKET_PROTO_UNIX)
-R_API int r_socket_unix_listen(RSocket *s, const char *file);
+#define r_socket_connect_unix(a, b) r_socket_connect (a, b, b, R_SOCKET_PROTO_UNIX, 0)
+#else
+#define r_socket_connect_unix(a, b) (false)
 #endif
+R_API bool r_socket_listen(RSocket *s, const char *port, const char *certfile);
 R_API int r_socket_port_by_name(const char *name);
 R_API int r_socket_close_fd(RSocket *s);
 R_API int r_socket_close(RSocket *s);
 R_API int r_socket_free(RSocket *s);
-R_API bool r_socket_listen(RSocket *s, const char *port, const char *certfile);
 R_API RSocket *r_socket_accept(RSocket *s);
 R_API RSocket *r_socket_accept_timeout(RSocket *s, unsigned int timeout);
-R_API int r_socket_block_time(RSocket *s, int block, int sec);
+R_API int r_socket_block_time(RSocket *s, int block, int sec, int usec);
 R_API int r_socket_flush(RSocket *s);
 R_API int r_socket_ready(RSocket *s, int secs, int usecs);
 R_API char *r_socket_to_string(RSocket *s);
@@ -136,9 +154,10 @@ typedef struct r_socket_http_request {
 	char *referer;
 	ut8 *data;
 	int data_length;
+	bool auth;
 } RSocketHTTPRequest;
 
-R_API RSocketHTTPRequest *r_socket_http_accept(RSocket *s, int accept_timeout, int timeout);
+R_API RSocketHTTPRequest *r_socket_http_accept(RSocket *s, RSocketHTTPOptions *so);
 R_API void r_socket_http_response(RSocketHTTPRequest *rs, int code, const char *out, int x, const char *headers);
 R_API void r_socket_http_close(RSocketHTTPRequest *rs);
 R_API ut8 *r_socket_http_handle_upload(const ut8 *str, int len, int *olen);
@@ -151,19 +170,20 @@ typedef char *(*rap_server_cmd)(void *user, const char *command);
 typedef int (*rap_server_close)(void *user, int fd);
 
 enum {
-	RAP_RMT_OPEN = 0x01,
-	RAP_RMT_READ,
-	RAP_RMT_WRITE,
-	RAP_RMT_SEEK,
-	RAP_RMT_CLOSE,
-	RAP_RMT_CMD = 0x07,
+	RAP_RMT_OPEN = 1,
+	RAP_RMT_READ = 2,
+	RAP_RMT_WRITE = 3,
+	RAP_RMT_SEEK = 4,
+	RAP_RMT_CLOSE = 5,
+	// system was deprecated in slot 6,
+	RAP_RMT_CMD = 7,
 	RAP_RMT_REPLY = 0x80,
 	RAP_RMT_MAX = 4096
 };
 
 typedef struct r_socket_rap_server_t {
 	RSocket *fd;
-	char port[5];
+	char *port;
 	ut8 buf[RAP_RMT_MAX + 32];	// This should be used as a static buffer for everything done by the server
 	rap_server_open open;
 	rap_server_seek seek;
@@ -235,16 +255,25 @@ R_API int r_run_start(RRunProfile *p);
 R_API void r_run_reset(RRunProfile *p);
 R_API int r_run_parsefile(RRunProfile *p, const char *b);
 
-/* r2pipe */
-R_API R2Pipe *r2p_open(const char *cmd);
-R_API R2Pipe *r2p_open_corebind(RCoreBind *coreb);
-R_API int r2p_close(R2Pipe *r2p);
+/* rapipe */
+R_API R2Pipe *rap_open(const char *cmd);
+R_API R2Pipe *rap_open_corebind(RCoreBind *coreb);
+R_API int rap_close(R2Pipe *rap);
 
-R_API char *r2p_cmd(R2Pipe *r2p, const char *str);
-R_API char *r2p_cmdf(R2Pipe *r2p, const char *fmt, ...);
+R_API char *rap_cmd(R2Pipe *rap, const char *str);
+R_API char *rap_cmdf(R2Pipe *rap, const char *fmt, ...);
 
-R_API int r2p_write(R2Pipe *r2p, const char *str);
-R_API char *r2p_read(R2Pipe *r2p);
+R_API int rap_write(R2Pipe *rap, const char *str);
+R_API char *rap_read(R2Pipe *rap);
+
+R_API int r2pipe_write(R2Pipe *r2pipe, const char *str);
+R_API char *r2pipe_read(R2Pipe *r2pipe);
+R_API int r2pipe_close(R2Pipe *r2pipe);
+R_API R2Pipe *r2pipe_open_corebind(RCoreBind *coreb);
+R_API R2Pipe *r2pipe_open(const char *cmd);
+R_API R2Pipe *r2pipe_open_dl(const char *file);
+R_API char *r2pipe_cmd(R2Pipe *r2pipe, const char *str);
+R_API char *r2pipe_cmdf(R2Pipe *r2pipe, const char *fmt, ...);
 #endif
 
 #ifdef __cplusplus

@@ -3,66 +3,72 @@
 #include <r_bin.h>
 #include "i/private.h"
 
-static void hashify(char *s, ut64 vaddr) {
-	if (!s) {
-		return;
-	}
+static char *__hashify(char *s, ut64 vaddr) {
+	r_return_val_if_fail (s, NULL);
+
+	char *os = s;
 	while (*s) {
 		if (!IS_PRINTABLE (*s)) {
 			if (vaddr && vaddr != UT64_MAX) {
-				sprintf (s, "_%" PFMT64d, vaddr);
-			} else {
-				ut32 hash = sdb_hash (s);
-				sprintf (s, "%x", hash);
+				char *ret = r_str_newf ("_%" PFMT64d, vaddr);
+				if (ret) {
+					free (os);
+				}
+				return ret;
 			}
-			return;
+			ut32 hash = sdb_hash (s);
+			char *ret = r_str_newf ("%x", hash);
+			if (ret) {
+				free (os);
+			}
+			return ret;
 		}
 		s++;
 	}
+	return os;
 }
 
-// TODO: optimize this api:
-// - bin plugins should call r_bin_filter_name() before appending
-R_API void r_bin_filter_name(RBinFile *bf, Sdb *db, ut64 vaddr, char *name, int maxlen) {
-	const char *uname;
-	ut32 vhash, hash;
-	int count;
-	if (!db || !name) {
-		return;
-	}
-	uname = sdb_fmt ("%" PFMT64x ".%s", vaddr, name);
-	vhash = sdb_hash (uname); // vaddr hash - unique
-	hash = sdb_hash (name);   // name hash - if dupped and not in unique hash must insert
-	count = sdb_num_inc (db, sdb_fmt ("%x", hash), 1, 0);
+// - name should be allocated on the heap
+R_API char *r_bin_filter_name(RBinFile *bf, Sdb *db, ut64 vaddr, char *name) {
+	r_return_val_if_fail (db && name, NULL);
+
+	char *resname = name;
+	const char *uname = sdb_fmt ("%" PFMT64x ".%s", vaddr, resname);
+	ut32 vhash = sdb_hash (uname); // vaddr hash - unique
+	ut32 hash = sdb_hash (resname); // name hash - if dupped and not in unique hash must insert
+	int count = sdb_num_inc (db, sdb_fmt ("%x", hash), 1, 0);
+
 	if (sdb_exists (db, sdb_fmt ("%x", vhash))) {
 		// TODO: symbol is dupped, so symbol can be removed!
-		return;
+		return resname;
 	}
 	sdb_num_set (db, sdb_fmt ("%x", vhash), 1, 0);
 	if (vaddr) {
-		hashify (name, vaddr);
+		char *p = __hashify (resname, vaddr);
+		if (p) {
+			resname = p;
+		}
 	}
 	if (count > 1) {
-		int namelen = strlen (name);
-		if (namelen > maxlen) {
-			name[maxlen] = 0;
+		char *p = r_str_appendf (resname, "_%d", count - 1);
+		if (p) {
+			resname = p;
 		}
-		strcat (name, sdb_fmt ("_%d", count - 1));
+
 		// two symbols at different addresses and same name wtf
 		//	eprintf ("Symbol '%s' dupped!\n", sym->name);
 	}
+	return resname;
 }
 
-R_API void r_bin_filter_sym(RBinFile *bf, Sdb *db, ut64 vaddr, RBinSymbol *sym) {
-	if (!db || !sym || !sym->name) {
-		return;
-	}
-	char *name = sym->name;
+R_API void r_bin_filter_sym(RBinFile *bf, HtPP *ht, ut64 vaddr, RBinSymbol *sym) {
+	r_return_if_fail (ht && sym && sym->name);
+	const char *name = sym->name;
 	// if (!strncmp (sym->name, "imp.", 4)) {
 	// demangle symbol name depending on the language specs if any
 	if (bf && bf->o && bf->o->lang) {
 		const char *lang = r_bin_lang_tostring (bf->o->lang);
-		char *dn = r_bin_demangle (bf, lang, sym->name, sym->vaddr);
+		char *dn = r_bin_demangle (bf, lang, sym->name, sym->vaddr, false);
 		if (dn && *dn) {
 			sym->dname = dn;
 			// XXX this is wrong but is required for this test to pass
@@ -85,34 +91,40 @@ R_API void r_bin_filter_sym(RBinFile *bf, Sdb *db, ut64 vaddr, RBinSymbol *sym) 
 		}
 	}
 
-	// XXX this is very slow, must be optimized
-	const char *uname = sdb_fmt ("%" PFMT64x ".%s", vaddr, name);
-	ut32 vhash = sdb_hash (uname); // vaddr hash - unique
-	ut32 hash = sdb_hash (name); // name hash - if dupped and not in unique hash must insert
-	int count = sdb_num_inc (db, sdb_fmt ("%x", hash), 1, 0);
-	if (sdb_exists (db, sdb_fmt ("%x", vhash))) {
-		// TODO: symbol is dupped, so symbol can be removed!
+	const char *uname = sdb_fmt ("%" PFMT64x ".%c.%s", vaddr, sym->is_imported ? 'i' : 's', name);
+	bool res = ht_pp_insert (ht, uname, sym);
+	if (!res) {
 		return;
 	}
-	sdb_num_set (db, sdb_fmt ("%x", vhash), 1, 0);
-	if (vaddr) {
-		//hashify (name, vaddr);
+	sym->dup_count = 0;
+
+	const char *oname = sdb_fmt ("o.0.%c.%s", sym->is_imported ? 'i' : 's', name);
+	RBinSymbol *prev_sym = ht_pp_find (ht, oname, NULL);
+	if (!prev_sym) {
+		if (!ht_pp_insert (ht, oname, sym)) {
+			R_LOG_WARN ("Failed to insert dup_count in ht");
+			return;
+		}
+	} else {
+		sym->dup_count = prev_sym->dup_count + 1;
+		ht_pp_update (ht, oname, sym);
 	}
-	sym->dup_count = count - 1;
 }
 
 R_API void r_bin_filter_symbols(RBinFile *bf, RList *list) {
-	Sdb *db = sdb_new0 ();
-	if (db) {
-		RListIter *iter;
-		RBinSymbol *sym;
-		r_list_foreach (list, iter, sym) {
-			if (sym && sym->name && *sym->name) {
-				r_bin_filter_sym (bf, db, sym->vaddr, sym);
-			}
-		}
-		sdb_free (db);
+	HtPP *ht = ht_pp_new0 ();
+	if (!ht) {
+		return;
 	}
+
+	RListIter *iter;
+	RBinSymbol *sym;
+	r_list_foreach (list, iter, sym) {
+		if (sym && sym->name && *sym->name) {
+			r_bin_filter_sym (bf, ht, sym->vaddr, sym);
+		}
+	}
+	ht_pp_free (ht);
 }
 
 R_API void r_bin_filter_sections(RBinFile *bf, RList *list) {
@@ -120,14 +132,10 @@ R_API void r_bin_filter_sections(RBinFile *bf, RList *list) {
 	Sdb *db = sdb_new0 ();
 	RListIter *iter;
 	r_list_foreach (list, iter, sec) {
-		int maxlen = strlen (sec->name) + 8;
-		char *newbuf = realloc (sec->name, maxlen);
-		if (!newbuf) {
-			eprintf ("%s: Failed to reallocate buffer\n", __func__);
-			continue;
+		char *p = r_bin_filter_name (bf, db, sec->vaddr, sec->name);
+		if (p) {
+			sec->name = p;
 		}
-		sec->name = newbuf;
-		r_bin_filter_name (bf, db, sec->vaddr, sec->name, maxlen);
 	}
 	sdb_free (db);
 }
@@ -146,7 +154,7 @@ static bool false_positive(const char *str) {
 		bo[i] = 0;
 	}
 	for (i = 0; str[i]; i++) {
-		if (IS_DIGIT(str[i])) {
+		if (IS_DIGIT (str[i])) {
 			nm++;
 		} else if (str[i]>='a' && str[i]<='z') {
 			lo++;
@@ -232,34 +240,47 @@ R_API bool r_bin_strpurge(RBin *bin, const char *str, ut64 refaddr) {
 	return purge;
 }
 
+static int get_char_ratio(char ch, const char *str) {
+	int i;
+	int ch_count = 0;
+	for (i = 0; str[i]; i++) {
+		if (str[i] == ch) {
+			ch_count++;
+		}
+	}
+	return i ? ch_count * 100 / i : 0;
+}
+
 static bool bin_strfilter(RBin *bin, const char *str) {
 	int i;
+	bool got_uppercase, in_esc_seq;
 	switch (bin->strfilter) {
 	case 'U': // only uppercase strings
+		got_uppercase = false;
+		in_esc_seq = false;
 		for (i = 0; str[i]; i++) {
 			char ch = str[i];
-			if (ch == ' ') {
-				continue;
+			if (ch == ' ' ||
+			    (in_esc_seq && (ch == 't' || ch == 'n' || ch == 'r'))) {
+				goto loop_end;
 			}
-			if (ch < '@'|| ch > 'Z') {
+			if (ch < 0 || !IS_PRINTABLE (ch) || IS_LOWER (ch)) {
 				return false;
 			}
-			if (ch < 0 || !IS_PRINTABLE (ch)) {
-				return false;
+			if (IS_UPPER (ch)) {
+				got_uppercase = true;
 			}
+loop_end:
+			in_esc_seq = in_esc_seq ? false : ch == '\\';
 		}
-		if (str[0] && str[1]) {
-			for (i = 2; i<6 && str[i]; i++) {
-				if (str[i] == str[0]) {
-					return false;
-				}
-				if (str[i] == str[1]) {
-					return false;
-				}
-			}
+		if (get_char_ratio (str[0], str) >= 60) {
+			return false;
 		}
-		if (str[0] == str[2]) {
-			return false; // rm false positives
+		if (str[0] && get_char_ratio (str[1], str) >= 60) {
+			return false;
+		}
+		if (!got_uppercase) {
+			return false;
 		}
 		break;
 	case 'a': // only alphanumeric - plain ascii
@@ -272,10 +293,10 @@ static bool bin_strfilter(RBin *bin, const char *str) {
 		break;
 	case 'e': // emails
 		if (str && *str) {
-			if (!strstr (str + 1, "@")) {
+			if (!strchr (str + 1, '@')) {
 				return false;
 			}
-			if (!strstr (str + 1, ".")) {
+			if (!strchr (str + 1, '.')) {
 				return false;
 			}
 		} else {
@@ -284,7 +305,7 @@ static bool bin_strfilter(RBin *bin, const char *str) {
 		break;
 	case 'f': // format-string
 		if (str && *str) {
-			if (!strstr (str + 1, "%")) {
+			if (!strchr (str + 1, '%')) {
 				return false;
 			}
 		} else {

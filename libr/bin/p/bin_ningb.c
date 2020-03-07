@@ -7,34 +7,16 @@
 #include <string.h>
 #include "../format/nin/nin.h"
 
-static bool load_bytes(RBinFile *bf, void **bin_obj, const ut8 *buf, ut64 sz, ut64 loadaddr, Sdb *sdb){
-	return true;
-}
-
-static bool check_bytes(const ut8 *buf, ut64 length) {
-	ut8 lict[48];
-	if (!buf || length < (0x104 + 48)) {
-		return 0;
+static bool check_buffer(RBuffer *b) {
+	ut8 lict[sizeof (lic)];
+	if (r_buf_read_at (b, 0x104, lict, sizeof (lict)) == sizeof (lict)) {
+		return !memcmp (lict, lic, sizeof (lict));
 	}
-	memcpy (lict, buf + 0x104, 48);
-	return (!memcmp (lict, lic, 48))? 1: 0;
+	return false;
 }
 
-static bool load(RBinFile *bf) {
-	const ut8 *bytes = bf ? r_buf_buffer (bf->buf) : NULL;
-	ut64 sz = bf ? r_buf_size (bf->buf): 0;
-	ut64 la = (bf && bf->o) ? bf->o->loadaddr: 0;
-	if (!bf || !bf->o) {
-		return false;
-	}
-	load_bytes (bf, &bf->o->bin_obj, bytes, sz, la, bf->sdb);
-	return check_bytes (bytes, sz);
-}
-
-static int destroy(RBinFile *bf) {
-	r_buf_free (bf->buf);
-	bf->buf = NULL;
-	return true;
+static bool load_buffer(RBinFile *bf, void **bin_obj, RBuffer *buf, ut64 loadaddr, Sdb *sdb) {
+	return check_buffer (buf);
 }
 
 static ut64 baddr(RBinFile *bf) {
@@ -85,7 +67,7 @@ static RList* sections(RBinFile *bf){
 		return NULL;
 	}
 
-	ret = r_list_new();
+	ret = r_list_new ();
 	if (!ret) {
 		return NULL;
 	}
@@ -217,8 +199,7 @@ static RBinInfo* info(RBinFile *bf) {
 		return NULL;
 	}
 	r_buf_read_at (bf->buf, 0x104, rom_header, 76);
-	ret->file = calloc (1, 17);
-	strncpy (ret->file, (const char*)&rom_header[48], 16);
+	ret->file = r_str_ndup ((const char*)&rom_header[48], 16);
 	ret->type = malloc (128);
 	ret->type[0] = 0;
 	gb_get_gbtype (ret->type, rom_header[66], rom_header[63]);
@@ -306,10 +287,8 @@ RBinPlugin r_bin_plugin_ningb = {
 	.name = "ningb",
 	.desc = "Gameboy format r_bin plugin",
 	.license = "LGPL3",
-	.load = &load,
-	.load_bytes = &load_bytes,
-	.destroy = &destroy,
-	.check_bytes = &check_bytes,
+	.load_buffer = &load_buffer,
+	.check_buffer = &check_buffer,
 	.baddr = &baddr,
 	.binsym = &binsym,
 	.entries = &entries,
@@ -319,7 +298,7 @@ RBinPlugin r_bin_plugin_ningb = {
 	.mem = &mem,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_BIN,
 	.data = &r_bin_plugin_ningb,

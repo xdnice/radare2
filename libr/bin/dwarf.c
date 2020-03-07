@@ -760,7 +760,6 @@ R_API int r_bin_dwarf_parse_line_raw2(const RBin *a, const ut8 *obuf,
 
 		r_bin_dwarf_header_fini (&hdr);
 		buf = buf_tmp + tmplen;
-		len = (int)(buf_end - buf);
 	}
 	return true;
 }
@@ -886,7 +885,8 @@ static int r_bin_dwarf_expand_die(RBinDwarfDIE* die) {
 	if (!tmp) {
 		return -ENOMEM;
 	}
-	memset ((ut8*)tmp + die->capacity, 0, die->capacity);
+	memset ((ut8*)tmp + die->capacity * sizeof (RBinDwarfAttrValue),
+			0, die->capacity * sizeof (RBinDwarfAttrValue));
 	die->attr_values = tmp;
 	die->capacity *= 2;
 	return 0;
@@ -918,7 +918,8 @@ static int r_bin_dwarf_expand_cu(RBinDwarfCompUnit *cu) {
 		return -ENOMEM;
 	}
 
-	memset ((ut8*)tmp + cu->capacity, 0, cu->capacity);
+	memset ((ut8*)tmp + cu->capacity * sizeof (RBinDwarfDIE),
+			0, cu->capacity * sizeof (RBinDwarfDIE));
 	cu->dies = tmp;
 	cu->capacity *= 2;
 
@@ -955,7 +956,9 @@ static int r_bin_dwarf_expand_abbrev_decl(RBinDwarfAbbrevDecl *ad) {
 		return -ENOMEM;
 	}
 
-	memset ((ut8*)tmp + ad->capacity, 0, ad->capacity);
+	// Set the area in the buffer past the length to 0
+	memset ((ut8*)tmp + ad->capacity * sizeof (RBinDwarfAttrSpec),
+			0, ad->capacity * sizeof (RBinDwarfAttrSpec));
 	ad->specs = tmp;
 	ad->capacity *= 2;
 
@@ -989,7 +992,8 @@ static int r_bin_dwarf_expand_debug_abbrev(RBinDwarfDebugAbbrev *da) {
 	if (!tmp) {
 		return -ENOMEM;
 	}
-	memset ((ut8*)tmp + da->capacity, 0, da->capacity);
+	memset ((ut8*)tmp + da->capacity * sizeof (RBinDwarfAbbrevDecl),
+			0, da->capacity * sizeof (RBinDwarfAbbrevDecl));
 
 	da->decls = tmp;
 	da->capacity *= 2;
@@ -1658,12 +1662,11 @@ R_API RList *r_bin_dwarf_parse_line(RBin *a, int mode) {
 			free (buf);
 			return NULL;
 		}
-		list = r_list_new (); // always return empty list wtf
+		list = r_list_newf (r_bin_dwarf_row_free); // always return empty list wtf
 		if (!list) {
 			free (buf);
 			return NULL;
 		}
-		list->free = r_bin_dwarf_row_free;
 		r_bin_dwarf_parse_line_raw2 (a, buf, len, mode);
 		// k bin/cur/addrinfo/*
 		SdbListIter *iter;

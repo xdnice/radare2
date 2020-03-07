@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2013-2018 - pancake */
+/* radare2 - LGPL - Copyright 2013-2019 - pancake */
 
 #include <r_asm.h>
 #include <r_lib.h>
@@ -198,10 +198,14 @@ static int check_features(RAsm *a, cs_insn *insn) {
 	return 1;
 }
 
-#ifndef CORELIB
-R_API RLibStruct radare_plugin = {
-	.type = R_LIB_TYPE_ASM,
-	.data = &r_asm_plugin_x86_cs,
-	.version = R2_VERSION
-};
+#ifndef R2_PLUGIN_INCORE
+R_API RLibStruct *radare_plugin_function() {
+	RLibStruct *rp = R_NEW0 (RLibStruct);
+	if (rp) {
+		rp->type = R_LIB_TYPE_ASM;
+		rp->data = &r_asm_plugin_x86_cs;
+		rp->version = R2_VERSION;
+	}
+	return rp;
+}
 #endif

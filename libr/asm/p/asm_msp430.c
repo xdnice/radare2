@@ -18,6 +18,13 @@ static int disassemble(RAsm *a, RAsmOp *op, const ut8 *buf, int len) {
 			r_strbuf_set (&op->buf_asm, sdb_fmt ("%s", cmd.instr));
 		}
 	}
+	if (a->syntax != R_ASM_SYNTAX_ATT) {
+		char *ba = (char *)r_strbuf_get (&op->buf_asm);
+		r_str_replace_ch (ba, '#', 0, 1);
+		// r_str_replace_ch (ba, "$", "$$", 1);
+		r_str_replace_ch (ba, '&', 0, 1);
+		r_str_replace_ch (ba, '%', 0, 1);
+	}
 
 	return op->size = ret;
 }
@@ -32,7 +39,7 @@ RAsmPlugin r_asm_plugin_msp430 = {
 	.disassemble = &disassemble,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ASM,
 	.data = &r_asm_plugin_msp430,

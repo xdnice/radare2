@@ -117,6 +117,7 @@ static int __read(RIO *io, RIODesc *fd, ut8 *buf, int count) {
 		count = mallocsz - _io_malloc_off (fd);
 	}
 	memcpy (buf, _io_malloc_buf (fd) + _io_malloc_off (fd), count);
+	_io_malloc_set_off (fd, _io_malloc_off (fd) + count);
 	return count;
 }
 
@@ -157,7 +158,7 @@ static bool __check(RIO *io, const char *pathname, bool many) {
 }
 
 static RIODesc *__open(RIO *io, const char *pathname, int rw, int mode) {
-	if (__check (io, pathname,0)) {
+	if (__check (io, pathname, 0)) {
 		RIOMalloc *mal = R_NEW0 (RIOMalloc);
 		if (!strncmp (pathname, "hex://", 6)) {
 			mal->size = strlen (pathname);
@@ -192,7 +193,8 @@ static RIODesc *__open(RIO *io, const char *pathname, int rw, int mode) {
 
 RIOPlugin r_io_plugin_malloc = {
 	.name = "malloc",
-	.desc = "memory allocation (malloc://1024 hex://cd8090)",
+	.desc = "Memory allocation plugin",
+	.uris = "malloc://,hex://",
 	.license = "LGPL3",
 	.open = __open,
 	.close = __close,
@@ -203,7 +205,7 @@ RIOPlugin r_io_plugin_malloc = {
 	.resize = __resize,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_IO,
 	.data = &r_io_plugin_malloc,

@@ -1,7 +1,7 @@
 
 # ptrace-wrap
 
-ptrace has one major issue: When one process attaches to another, the tracer's pid is
+ptrace on Linux has one major issue: When one process attaches to another, the tracer's pid is
 associated to the tracee's pid.
 However, because different threads in the tracer have different tids, which are actually just
 pids on Linux, only the one thread that started the trace can continue to call ptrace for
@@ -65,7 +65,7 @@ If you need thread-safety, you must synchronize the access yourself.
 
 ## About
 
-Created by Florian Märkl for [radare2](https://github.com/radare/radare2) and [Cutter](https://github.com/radareorg/cutter/).
+Created by Florian Märkl for [radare2](https://github.com/radareorg/radare2) and [Cutter](https://github.com/radareorg/cutter/).
 
 ```
 ptrace-wrap is free software: you can redistribute it and/or modify

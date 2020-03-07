@@ -2,37 +2,20 @@
 
 #include <r_types.h>
 #include <r_util.h>
+#include <r_util/r_print.h>
 #include <r_lib.h>
 #include <r_bin.h>
 
 #include "mdmp/mdmp.h"
 
-/* FIXME: This is already in r_bin.c but its static, why?! */
-static void r_bbin_mem_free(void *data) {
-	RBinMem *mem = (RBinMem *)data;
-	if (mem && mem->mirrors) {
-		mem->mirrors->free = r_bbin_mem_free;
-		r_list_free (mem->mirrors);
-		mem->mirrors = NULL;
-	}
-	free (mem);
-}
-
-static ut64 baddr(RBinFile *bf) {
-	return 0LL;
-}
-
 static Sdb *get_sdb(RBinFile *bf) {
-	if (!bf || !bf->o) {
-		return NULL;
-	}
+	r_return_val_if_fail (bf && bf->o, NULL);
 	struct r_bin_mdmp_obj *obj = (struct r_bin_mdmp_obj *)bf->o->bin_obj;
 	return (obj && obj->kv) ? obj->kv: NULL;
 }
 
-static int destroy(RBinFile *bf) {
+static void destroy(RBinFile *bf) {
 	r_bin_mdmp_free ((struct r_bin_mdmp_obj*)bf->o->bin_obj);
-	return true;
 }
 
 static RList* entries(RBinFile *bf) {
@@ -175,7 +158,7 @@ static RList* libs(RBinFile *bf) {
 			return ret;
 		}
 		for (i = 0; !libs[i].last; i++) {
-			ptr = r_str_newf ("[0x%.08x] - %s", pe64_bin->vaddr, libs[i].name);
+			ptr = r_str_newf ("[0x%.08"PFMT64x"] - %s", pe64_bin->vaddr, libs[i].name);
 			r_list_append (ret, ptr);
 		}
 		free (libs);
@@ -183,48 +166,15 @@ static RList* libs(RBinFile *bf) {
 	return ret;
 }
 
-static bool load_bytes(RBinFile *bf, void **bin_obj, const ut8 *buf, ut64 sz, ut64 loadaddr, Sdb *sdb) {
-	RBuffer *tbuf;
-	struct r_bin_mdmp_obj *res;
-
-	if (!buf || !sz || sz == UT64_MAX) {
-		return false;
-	}
-
-	tbuf = r_buf_new ();
-	r_buf_set_bytes (tbuf, buf, sz);
-	if ((res = r_bin_mdmp_new_buf (tbuf))) {
-		sdb_ns_set (sdb, "info", res->kv);
-	}
-	r_buf_free (tbuf);
-
-	if (res) {
-		*bin_obj = res;
-		return true;
-	} else {
-		return false;
-	}
-}
-
-static void *load_buffer(RBinFile *bf, RBuffer *buf, ut64 loadaddr, Sdb *sdb) {
-	r_return_val_if_fail (buf, NULL);
-
+static bool load_buffer(RBinFile *bf, void **bin_obj, RBuffer *buf, ut64 loadaddr, Sdb *sdb) {
+	r_return_val_if_fail (buf, false);
 	struct r_bin_mdmp_obj *res = r_bin_mdmp_new_buf (buf);
 	if (res) {
 		sdb_ns_set (sdb, "info", res->kv);
+		*bin_obj = res;
+		return true;
 	}
-	return res;
-}
-
-static bool load(RBinFile *bf) {
-	const ut8 *bytes = bf? r_buf_buffer (bf->buf): NULL;
-	ut64 sz = bf? r_buf_size (bf->buf): 0;
-
-	if (!bf || !bf->o) {
-		return false;
-	}
-
-	return load_bytes (bf, &bf->o->bin_obj, bytes, sz, bf->o->loadaddr, bf->sdb);
+	return false;
 }
 
 static RList *sections(RBinFile *bf) {
@@ -290,16 +240,32 @@ static RList *sections(RBinFile *bf) {
 
 	// XXX: Never add here as they are covered above
 	r_list_foreach (obj->streams.modules, it, module) {
+		ut8 b[512];
+
 		if (!(ptr = R_NEW0 (RBinSection))) {
 			return ret;
 		}
-		if (module->module_name_rva > obj->b->length) {
+		if (module->module_name_rva + sizeof (struct minidump_string) >= r_buf_size (obj->b)) {
+			free (ptr);
 			continue;
 		}
-
-		str = (struct minidump_string *)(obj->b->buf + module->module_name_rva);
-		ptr->name = calloc (1, str->length * 4);
-		r_str_utf16_to_utf8 ((ut8 *)ptr->name, str->length * 4, (const ut8 *)&(str->buffer), str->length, obj->endian);
+		r_buf_read_at (obj->b, module->module_name_rva, (ut8*)&b, sizeof (b));
+		str = (struct minidump_string *)b;
+		int ptr_name_len = (str->length + 2) * 4;
+		if (ptr_name_len < 1 || ptr_name_len > sizeof (b) - 4) {
+			continue;
+		}
+		if (module->module_name_rva + str->length > r_buf_size (obj->b)) {
+			free (ptr);
+			break;
+		}
+		ptr->name = calloc (1, ptr_name_len);
+		if (!ptr->name) {
+			free (ptr);
+			continue;
+		}
+		r_str_utf16_to_utf8 ((ut8 *)ptr->name, str->length * 4,
+				(const ut8 *)(&str->buffer), str->length, obj->endian);
 		ptr->vaddr = module->base_of_image;
 		ptr->vsize = module->size_of_image;
 		ptr->paddr = r_bin_mdmp_get_paddr (obj, ptr->vaddr);
@@ -309,25 +275,28 @@ static RList *sections(RBinFile *bf) {
 		/* As this is an encompassing section we will set the RWX to 0 */
 		ptr->perm = 0;
 
-		r_list_append (ret, ptr);
+		if (!r_list_append (ret, ptr)) {
+			free (ptr);
+			break;
+		}
 
 		/* Grab the pe sections */
 		r_list_foreach (obj->pe32_bins, it0, pe32_bin) {
 			if (pe32_bin->vaddr == module->base_of_image && pe32_bin->bin) {
 				pe_secs = Pe32_r_bin_mdmp_pe_get_sections(pe32_bin);
 				r_list_join (ret, pe_secs);
-				r_list_free(pe_secs);
+				r_list_free (pe_secs);
 			}
 		}
 		r_list_foreach (obj->pe64_bins, it0, pe64_bin) {
 			if (pe64_bin->vaddr == module->base_of_image && pe64_bin->bin) {
 				pe_secs = Pe64_r_bin_mdmp_pe_get_sections(pe64_bin);
 				r_list_join (ret, pe_secs);
-				r_list_free(pe_secs);
+				r_list_free (pe_secs);
 			}
 		}
 	}
-	eprintf("[INFO] Parsing data sections for large dumps can take time, "
+	eprintf ("[INFO] Parsing data sections for large dumps can take time, "
 		"please be patient (but if strings ain't your thing try with "
 		"-z)!\n");
 	return ret;
@@ -345,7 +314,7 @@ static RList *mem(RBinFile *bf) {
 	ut64 index;
 	ut64 state, type, a_protect;
 
-	if (!(ret = r_list_newf (r_bbin_mem_free))) {
+	if (!(ret = r_list_newf (r_bin_mem_free))) {
 		return NULL;
 	}
 
@@ -369,7 +338,9 @@ static RList *mem(RBinFile *bf) {
 			a_protect = mem_info->allocation_protect;
 		}
 		location = &(module->memory);
-		ptr->name = strdup (sdb_fmt ("paddr=0x%08x state=0x%08x type=0x%08x allocation_protect=0x%08x Memory_Section", location->rva, state, type, a_protect));
+		ptr->name = strdup (sdb_fmt ("paddr=0x%08"PFMT64x" state=0x%08"PFMT64x
+					" type=0x%08"PFMT64x" allocation_protect=0x%08"PFMT64x" Memory_Section",
+					location->rva, state, type, a_protect));
 
 		r_list_append (ret, ptr);
 	}
@@ -390,7 +361,9 @@ static RList *mem(RBinFile *bf) {
 			type = mem_info->type;
 			a_protect = mem_info->allocation_protect;
 		}
-		ptr->name = strdup (sdb_fmt ("paddr=0x%08x state=0x%08x type=0x%08x allocation_protect=0x%08x Memory_Section", index, state, type, a_protect));
+		ptr->name = strdup (sdb_fmt ("paddr=0x%08"PFMT64x" state=0x%08"PFMT64x
+					" type=0x%08"PFMT64x" allocation_protect=0x%08"PFMT64x" Memory_Section",
+					index, state, type, a_protect));
 
 		index += module64->data_size;
 
@@ -471,45 +444,45 @@ static RList* symbols(RBinFile *bf) {
 	obj = (struct r_bin_mdmp_obj *)bf->o->bin_obj;
 
 	r_list_foreach (obj->pe32_bins, it, pe32_bin) {
-		list = Pe32_r_bin_mdmp_pe_get_symbols (pe32_bin);
+		list = Pe32_r_bin_mdmp_pe_get_symbols (bf->rbin, pe32_bin);
 		r_list_join (ret, list);
 		r_list_free (list);
 	}
 	r_list_foreach (obj->pe64_bins, it, pe64_bin) {
-		list = Pe64_r_bin_mdmp_pe_get_symbols (pe64_bin);
+		list = Pe64_r_bin_mdmp_pe_get_symbols (bf->rbin, pe64_bin);
 		r_list_join (ret, list);
 		r_list_free (list);
 	}
 	return ret;
 }
 
-static bool check_bytes(const ut8 *buf, ut64 length) {
-	return buf && (length > sizeof (struct minidump_header))
-		&& (!memcmp (buf, MDMP_MAGIC, 6));
+static bool check_buffer(RBuffer *b) {
+	ut8 magic[6];
+	if (r_buf_read_at (b, 0, magic, sizeof (magic)) == 6) {
+		return !memcmp (magic, MDMP_MAGIC, 6);
+	}
+	return false;
 }
 
 RBinPlugin r_bin_plugin_mdmp = {
 	.name = "mdmp",
 	.desc = "Minidump format r_bin plugin",
 	.license = "LGPL3",
-	.baddr = &baddr,
-	.check_bytes = &check_bytes,
 	.destroy = &destroy,
 	.entries = entries,
 	.get_sdb = &get_sdb,
 	.imports = &imports,
 	.info = &info,
 	.libs = &libs,
-	.load = &load,
-	.load_bytes = &load_bytes,
 	.load_buffer = &load_buffer,
+	.check_buffer = &check_buffer,
 	.mem = &mem,
 	.relocs = &relocs,
 	.sections = &sections,
 	.symbols = &symbols,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_BIN,
 	.data = &r_bin_plugin_mdmp,

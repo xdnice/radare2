@@ -1,4 +1,4 @@
-files = [
+r_io_sources = [
   'cache.c',
   'desc.c',
   'fd.c',
@@ -6,7 +6,6 @@ files = [
   'ioutils.c',
   'map.c',
   'plugin.c',
-  'section.c',
   'undo.c',
   'p_cache.c',
   'p/io_ar.c',
@@ -40,14 +39,8 @@ files = [
   'p/io_zip.c',
 ]
 
-if host_machine.system() == 'linux'
-  files += [
-    'p/io_r2k_linux.c',
-  ]
-endif
-
 if host_machine.system() == 'windows'
-  files += [
+  r_io_sources += [
     'p/io_r2k_windows.c',
     'p/io_w32.c',
     'p/io_w32dbg.c',
@@ -58,20 +51,32 @@ endif
 r_io_deps = [
   r_util_dep,
   r_socket_dep,
-  sdb_dep,
   bochs_dep,
   gdb_dep,
   windbg_dep,
   qnx_dep,
   zip_dep,
-  ar_dep
+  ar_dep,
+  pth
 ]
+
+if host_machine.system() == 'windows'
+  r_io_deps += w32dbg_wrap_dep
+endif
+
+if host_machine.system() == 'linux'
+  r_io_sources += [
+    'p/io_r2k_linux.c',
+  ]
+  ## only for shm_open
+  # r_io_deps += meson.get_compiler('c').find_library('rt')
+endif
 
 if use_ptrace_wrap
   r_io_deps += ptrace_wrap_dep
 endif
 
-r_io = library('r_io', files,
+r_io = library('r_io', r_io_sources,
   include_directories: platform_inc,
   dependencies: r_io_deps,
   c_args: library_cflags,
@@ -83,8 +88,7 @@ r_io = library('r_io', files,
 r_io_dep = declare_dependency(link_with: r_io,
                               include_directories: platform_inc)
 
-pkgconfig_mod.generate(
-  libraries: [r_io],
+pkgconfig_mod.generate(r_io,
   subdirs: 'libr',
   version: r2_version,
   name: 'r_io',

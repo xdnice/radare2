@@ -110,11 +110,11 @@ static task_t pid_to_task(RIODesc *fd, int pid) {
 	static int old_pid = -1;
 	kern_return_t kr;
 
-	RIODescData *iodd = fd?  (RIODescData *)fd->data: NULL;
+	RIODescData *iodd = fd? (RIODescData *)fd->data: NULL;
 	RIOMach *riom = NULL;
 	if (iodd) {
 		riom = iodd->data;
-		if (riom) {
+		if (riom && riom->task) {
 			old_task = riom->task;
 			riom->task = 0;
 			old_pid = iodd->pid;
@@ -422,6 +422,7 @@ static RIODesc *__open(RIO *io, const char *file, int rw, int mode) {
 	}
 	riom = R_NEW0 (RIOMach);
 	if (!riom) {
+		R_FREE (iodd);
 		return NULL;
 	}
 	riom->task = task;
@@ -444,15 +445,14 @@ static RIODesc *__open(RIO *io, const char *file, int rw, int mode) {
 
 static ut64 __lseek(RIO *io, RIODesc *fd, ut64 offset, int whence) {
 	switch (whence) {
-	case 0: // abs
+	case R_IO_SEEK_SET:
 		io->off = offset;
 		break;
-	case 1: // cur
-		io->off += (int)offset;
+	case R_IO_SEEK_CUR:
+		io->off += offset;
 		break;
-	case 2: // end
-		io->off = UT64_MAX;
-		break;
+	case R_IO_SEEK_END:
+		io->off = ST64_MAX;
 	}
 	return io->off;
 }
@@ -489,6 +489,9 @@ static char *__system(RIO *io, RIODesc *fd, const char *cmd) {
 
 	task_t task = pid_to_task (fd, iodd->tid);
 	/* XXX ugly hack for testing purposes */
+	if (!strcmp (cmd, "")) {
+		return NULL;
+	}
 	if (!strncmp (cmd, "perm", 4)) {
 		int perm = r_str_rwx (cmd + 4);
 		if (perm) {
@@ -553,8 +556,9 @@ static int __get_pid (RIODesc *desc) {
 // TODO: rename ptrace to io_mach .. err io.ptrace ??
 RIOPlugin r_io_plugin_mach = {
 	.name = "mach",
-	.desc = "mach debugger io plugin (mach://pid)",
+	.desc = "Attach to mach debugger instance",
 	.license = "LGPL",
+	.uris = "attach://,mach://,smach://",
 	.open = __open,
 	.close = __close,
 	.read = __read,
@@ -575,7 +579,7 @@ RIOPlugin r_io_plugin_mach = {
 };
 #endif
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_IO,
 	.data = &r_io_plugin_mach,

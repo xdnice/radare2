@@ -1,4 +1,4 @@
-files = [
+r_debug_sources = [
   'arg.c',
   'ddesc.c',
   'debug.c',
@@ -49,25 +49,33 @@ r_debug_deps = [
   qnx_dep,
   gdb_dep,
   bochs_dep,
-  r_socket_dep,
-  sdb_dep
+  r_socket_dep
 ]
 
 if host_machine.system() == 'linux'
-  files += [
+  r_debug_sources += [
     'p/native/linux/linux_debug.c',
     'p/native/linux/linux_coredump.c'
   ]
 endif
 
+if host_machine.system() == 'windows'
+  r_debug_sources += [
+    'p/native/maps/windows_maps.c',
+    'p/native/windows/windows_debug.c',
+    'p/native/windows/windows_message.c',
+  ]
+  r_debug_deps += w32dbg_wrap_dep
+endif
+
 if host_machine.system() != 'windows'
- files += [
-  'p/native/procfs.c'
- ]
+  r_debug_sources += [
+    'p/native/procfs.c'
+  ]
 endif
 
 if host_machine.system() == 'darwin'
-  files += [
+  r_debug_sources += [
     'p/native/xnu/xnu_debug.c',
     #'p/native/xnu/trap_arm.c',
     #'p/native/xnu/trap_x86.c',
@@ -76,8 +84,11 @@ if host_machine.system() == 'darwin'
   ]
 endif
 
-if ['netbsd', 'freebsd', 'dragonfly'].contains(host_machine.system())
+if ['netbsd', 'openbsd', 'freebsd', 'dragonfly'].contains(host_machine.system())
   r_debug_deps += cc.find_library('kvm', required: true)
+  r_debug_sources += [
+    'p/native/bsd/bsd_debug.c',
+  ]
 endif
 
 r_debug_inc = [
@@ -87,7 +98,7 @@ r_debug_inc = [
   )
 ]
 
-r_debug = library('r_debug', files,
+r_debug = library('r_debug', r_debug_sources,
   include_directories: r_debug_inc,
   c_args: library_cflags,
   dependencies: r_debug_deps,
@@ -99,8 +110,7 @@ r_debug = library('r_debug', files,
 r_debug_dep = declare_dependency(link_with: r_debug,
                                  include_directories: r_debug_inc)
 
-pkgconfig_mod.generate(
-  libraries: [r_debug],
+pkgconfig_mod.generate(r_debug,
   subdirs: 'libr',
   version: r2_version,
   name: 'r_debug',

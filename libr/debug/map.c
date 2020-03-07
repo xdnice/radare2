@@ -16,8 +16,8 @@ static void print_debug_map_json(RDebug *dbg, RDebugMap *map, bool prefix_comma)
 		dbg->cb_printf ("\"file\":\"%s\",", escaped_path);
 		free (escaped_path);
 	}
-	dbg->cb_printf ("\"addr\":%"PFMT64u",", map->addr);
-	dbg->cb_printf ("\"addr_end\":%"PFMT64u",", map->addr_end);
+	dbg->cb_printf ("\"addr\":%" PFMT64u ",", map->addr);
+	dbg->cb_printf ("\"addr_end\":%" PFMT64u ",", map->addr_end);
 	dbg->cb_printf ("\"type\":\"%c\",", map->user?'u':'s');
 	dbg->cb_printf ("\"perm\":\"%s\"", r_str_rwx_i (map->perm));
 	dbg->cb_printf ("}");
@@ -30,23 +30,26 @@ static void print_debug_map_line_header(RDebug *dbg, const char *input) {
 
 /* Write a single memory map line to the console */
 static void print_debug_map_line(RDebug *dbg, RDebugMap *map, ut64 addr, const char *input) {
+	char humansz[8];
 	if (input[0] == 'q') { // "dmq"
-		char buf[128];
 		char *name = (map->name && *map->name)
 			? r_str_newf ("%s.%s", map->name, r_str_rwx_i (map->perm))
-			: r_str_newf ("%08"PFMT64x".%s", map->addr, r_str_rwx_i (map->perm));
+			: r_str_newf ("%08" PFMT64x ".%s", map->addr, r_str_rwx_i (map->perm));
 		r_name_filter (name, 0);
-		dbg->cb_printf ("0x%016"PFMT64x" - 0x%016"PFMT64x" %6s %5s %s\n",
-			map->addr, map->addr_end,
-			r_num_units (buf, map->addr_end - map->addr),
-			r_str_rwx_i (map->perm), name);
+		r_num_units (humansz, sizeof (humansz), map->addr_end - map->addr);
+		dbg->cb_printf ("0x%016" PFMT64x " - 0x%016" PFMT64x " %6s %5s %s\n",
+			map->addr,
+			map->addr_end,
+			humansz,
+			r_str_rwx_i (map->perm),
+			name
+		);
 		free (name);
 	} else {
-		char sizebuf[128];
 		const char *fmtstr = dbg->bits & R_SYS_BITS_64
-			? "0x%016"PFMT64x" - 0x%016"PFMT64x" %c %s %6s %c %s %s %s%s%s\n"
-			: "0x%08"PFMT64x" - 0x%08"PFMT64x" %c %s %6s %c %s %s %s%s%s\n";
-		const char *type = map->shared? "sys": "usr";
+			? "0x%016" PFMT64x " - 0x%016" PFMT64x " %c %s %6s %c %s %s %s%s%s\n"
+			: "0x%08" PFMT64x " - 0x%08" PFMT64x " %c %s %6s %c %s %s %s%s%s\n";
+		const char *type = map->shared ? "sys": "usr";
 		const char *flagname = dbg->corebind.getName
 			? dbg->corebind.getName (dbg->corebind.core, map->addr) : NULL;
 		if (!flagname) {
@@ -60,17 +63,20 @@ static void print_debug_map_line(RDebug *dbg, RDebugMap *map, ut64 addr, const c
 			}
 			free (filtered_name);
 		}
+		r_num_units (humansz, sizeof (humansz), map->size);
 		dbg->cb_printf (fmtstr,
 			map->addr,
 			map->addr_end,
-			(addr>=map->addr && addr<map->addr_end)?'*':'-',
-			type, r_num_units (sizebuf, map->size),
-			map->user?'u':'s',
+			(addr >= map->addr && addr < map->addr_end) ? '*' : '-',
+			type,
+			humansz,
+			map->user ? 'u' : 's',
 			r_str_rwx_i (map->perm),
-			map->name?map->name:"?",
-			map->file?map->file:"?",
-			*flagname? " ; ": "",
-			flagname);
+			map->name ? map->name : "?",
+			map->file ? map->file : "?",
+			*flagname ? " ; " : "",
+			flagname
+		);
 	}
 }
 
@@ -87,7 +93,7 @@ R_API void r_debug_map_list(RDebug *dbg, ut64 addr, const char *input) {
 	case 'j': // "dmj" add JSON opening array brace
 		dbg->cb_printf ("[");
 		break;
-	case '*': // "dm*" dont print a header for r2 commands output
+	case '*': // "dm*" don't print a header for r2 commands output
 		break;
 	default:
 		// TODO: Find a way to only print headers if output isn't being grepped
@@ -106,9 +112,9 @@ R_API void r_debug_map_list(RDebug *dbg, ut64 addr, const char *input) {
 				{
 					char *name = (map->name && *map->name)
 						? r_str_newf ("%s.%s", map->name, r_str_rwx_i (map->perm))
-						: r_str_newf ("%08"PFMT64x".%s", map->addr, r_str_rwx_i (map->perm));
+						: r_str_newf ("%08" PFMT64x ".%s", map->addr, r_str_rwx_i (map->perm));
 					r_name_filter (name, 0);
-					dbg->cb_printf ("f map.%s 0x%08"PFMT64x" 0x%08"PFMT64x"\n",
+					dbg->cb_printf ("f map.%s 0x%08" PFMT64x " 0x%08" PFMT64x "\n",
 						name, map->addr_end - map->addr + 1, map->addr);
 					free (name);
 				}
@@ -183,6 +189,7 @@ static void print_debug_maps_ascii_art(RDebug *dbg, RList *maps, ut64 addr, int 
 	int width = r_cons_get_size (NULL) - 90;
 	RListIter *iter;
 	RDebugMap *map;
+	RConsPrintablePalette *pal = &r_cons_singleton ()->context->pal;
 	if (width < 1) {
 		width = 30;
 	}
@@ -193,16 +200,18 @@ static void print_debug_maps_ascii_art(RDebug *dbg, RList *maps, ut64 addr, int 
 		const char *color_prefix = ""; // Color escape code prefixed to string (address coloring)
 		const char *color_suffix = ""; // Color escape code appended to end of string
 		const char *fmtstr;
-		char size_buf[56]; // Holds the human formatted size string [124K]
+		char humansz[8]; // Holds the human formatted size string [124K]
 		int skip = 0; // Number of maps to skip when re-calculating the minmax
 		r_list_foreach (maps, iter, map) {
-			r_num_units (size_buf, map->size); // Convert map size to human readable string
+			r_num_units (humansz, sizeof (humansz), map->size); // Convert map size to human readable string
 			if (colors) {
 				color_suffix = Color_RESET;
-				if (map->perm & 2) { // Writable maps are red
-					color_prefix = Color_RED;
-				} else if (map->perm & 1) { // Executable maps are green
-					color_prefix = Color_GREEN;
+				if ((map->perm & 2) && (map->perm & 1)) { // Writable & Executable
+					color_prefix = pal->widget_sel;
+				} else if (map->perm & 2) { // Writable
+					color_prefix = pal->graph_false;
+				} else if (map->perm & 1) { // Executable
+					color_prefix = pal->graph_true;
 				} else {
 					color_prefix = "";
 					color_suffix = "";
@@ -215,13 +224,13 @@ static void print_debug_maps_ascii_art(RDebug *dbg, RList *maps, ut64 addr, int 
 				mul = findMinMax (maps, &min, &max, skip, width); //  Recalculate minmax
 			}
 			skip++;
-			fmtstr = dbg->bits & R_SYS_BITS_64 ? // Prefix formatting string (before bar)
-				"map %4.8s %c %s0x%016"PFMT64x"%s |" :
-				"map %4.8s %c %s0x%08"PFMT64x"%s |";
-			dbg->cb_printf (fmtstr, size_buf,
+			fmtstr = dbg->bits & R_SYS_BITS_64 // Prefix formatting string (before bar)
+				? "map %4.8s %c %s0x%016" PFMT64x "%s |"
+				: "map %4.8s %c %s0x%08" PFMT64x "%s |";
+			dbg->cb_printf (fmtstr, humansz,
 				(addr >= map->addr && \
 				addr < map->addr_end) ? '*' : '-',
-				color_prefix, map->addr, color_suffix); // * indicates map is within our current seeked offset
+				color_prefix, map->addr, color_suffix); // * indicates map is within our current sought offset
 			int col;
 			for (col = 0; col < width; col++) { // Iterate over the available width/columns for bar graph
 				ut64 pos = min + (col * mul); // Current address space to check
@@ -233,8 +242,8 @@ static void print_debug_maps_ascii_art(RDebug *dbg, RList *maps, ut64 addr, int 
 				}
 			}
 			fmtstr = dbg->bits & R_SYS_BITS_64 ? // Suffix formatting string (after bar)
-				"| %s0x%016"PFMT64x"%s %s %s\n" :
-				"| %s0x%08"PFMT64x"%s %s %s\n";
+				"| %s0x%016" PFMT64x "%s %s %s\n" :
+				"| %s0x%08" PFMT64x "%s %s %s\n";
 			dbg->cb_printf (fmtstr, color_prefix, map->addr_end, color_suffix,
 				r_str_rwx_i (map->perm), map->name);
 			last = map->addr;
@@ -270,7 +279,7 @@ R_API RDebugMap *r_debug_map_new(char *name, ut64 addr, ut64 addr_end, int perm,
 	/* range could be 0k on OpenBSD, it's a honeypot */
 	if (!name || addr > addr_end) {
 		eprintf ("r_debug_map_new: error (\
-			%"PFMT64x">%"PFMT64x")\n", addr, addr_end);
+			%" PFMT64x ">%" PFMT64x ")\n", addr, addr_end);
 		return NULL;
 	}
 	map = R_NEW0 (RDebugMap);
@@ -291,7 +300,7 @@ R_API RList *r_debug_modules_list(RDebug *dbg) {
 		dbg->h->modules_get (dbg): NULL;
 }
 
-R_API int r_debug_map_sync(RDebug *dbg) {
+R_API bool r_debug_map_sync(RDebug *dbg) {
 	bool ret = false;
 	if (dbg && dbg->h && dbg->h->map_get) {
 		RList *newmaps = dbg->h->map_get (dbg);
@@ -301,13 +310,13 @@ R_API int r_debug_map_sync(RDebug *dbg) {
 			ret = true;
 		}
 	}
-	return (int)ret;
+	return ret;
 }
 
-R_API RDebugMap* r_debug_map_alloc(RDebug *dbg, ut64 addr, int size) {
+R_API RDebugMap* r_debug_map_alloc(RDebug *dbg, ut64 addr, int size, bool thp) {
 	RDebugMap *map = NULL;
 	if (dbg && dbg->h && dbg->h->map_alloc) {
-		map = dbg->h->map_alloc (dbg, addr, size);
+		map = dbg->h->map_alloc (dbg, addr, size, thp);
 	}
 	return map;
 }

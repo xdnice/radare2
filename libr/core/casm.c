@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2017 - nibble, pancake */
+/* radare - LGPL - Copyright 2009-2019 - nibble, pancake */
 
 #include <r_types.h>
 #include <r_core.h>
@@ -57,12 +57,11 @@ R_API char* r_core_asm_search(RCore *core, const char *input) {
 	if (!(acode = r_asm_massemble (core->assembler, input))) {
 		return NULL;
 	}
-	ret = strdup (acode->buf_hex);
+	ret = r_asm_code_get_hex (acode);
 	r_asm_code_free (acode);
 	return ret;
 }
 
-#define OPSZ 8
 // TODO: add support for byte-per-byte opcode search
 R_API RList *r_core_asm_strsearch(RCore *core, const char *input, ut64 from, ut64 to, int maxhits, int regexp, int everyByte, int mode) {
 	RCoreAsmHit *hit;
@@ -81,7 +80,20 @@ R_API RList *r_core_asm_strsearch(RCore *core, const char *input, ut64 from, ut6
 	if (!input || !*input) {
 		return NULL;
 	}
-	if (core->blocksize <= OPSZ) {
+
+	char *inp = r_str_trim_dup (input + 1);
+	char *inp_arg = strchr (inp, ' ');
+	if (inp_arg) {
+		*inp_arg++ = 0;
+	}
+	ut64 usrimm = r_num_math (core->num, inp);
+	ut64 usrimm2 = inp_arg? r_num_math (core->num, inp_arg): usrimm;
+	if (usrimm > usrimm2) {
+		eprintf ("Error: /ci : Invalid range\n");
+		return NULL;
+	}
+
+	if (core->blocksize < 8) {
 		eprintf ("error: block size too small\n");
 		return NULL;
 	}
@@ -103,14 +115,13 @@ R_API RList *r_core_asm_strsearch(RCore *core, const char *input, ut64 from, ut6
 		if (!tok) {
 			break;
 		}
-		tokens[tokcount] = r_str_trim_head_tail (tok);
+		r_str_trim (tok);
+		tokens[tokcount] = tok;
 	}
 	tokens[tokcount] = NULL;
 	r_cons_break_push (NULL, NULL);
-	// int opsz = 0;
 	char *opst = NULL;
 	for (at = from, matchcount = 0; at < to; at += core->blocksize) {
-		matches = 0;
 		if (r_cons_is_breaked ()) {
 			break;
 		}
@@ -121,8 +132,51 @@ R_API RList *r_core_asm_strsearch(RCore *core, const char *input, ut64 from, ut6
 		idx = 0, matchcount = 0;
 		while (addrbytes * (idx + 1) <= core->blocksize) {
 			ut64 addr = at + idx;
+			if (addr >= to) {
+				break;
+			}
 			r_asm_set_pc (core->assembler, addr);
-			if (mode == 'e') {
+			if (mode == 'i') {
+				RAnalOp analop = {0};
+				ut64 len = R_MIN (15, core->blocksize - idx);
+				if (r_anal_op (core->anal, &analop, addr, buf + idx, len, R_ANAL_OP_MASK_BASIC | R_ANAL_OP_MASK_DISASM) < 1) {
+					idx ++; // TODO: honor mininstrsz
+					continue;
+				}
+				ut64 val = analop.val; // maybe chk for ptr or others?
+				bool match = (val != UT64_MAX && val >= usrimm && val <= usrimm2);
+				if (!match) {
+					ut64 val = analop.disp;
+					match = (val != UT64_MAX && val >= usrimm && val <= usrimm2);
+				}
+				if (!match) {
+					ut64 val = analop.ptr;
+					match = (val != UT64_MAX && val >= usrimm && val <= usrimm2);
+				}
+				if (match) {
+					if (!(hit = r_core_asm_hit_new ())) {
+						r_list_purge (hits);
+						R_FREE (hits);
+						goto beach;
+					}
+					hit->addr = addr;
+					hit->len = analop.size;  //  idx + len - tidx;
+					if (hit->len == -1) {
+						r_core_asm_hit_free (hit);
+						goto beach;
+					}
+					r_asm_disassemble (core->assembler, &op, buf + addrbytes * idx,
+					      core->blocksize - addrbytes * idx);
+					hit->code = r_str_newf (r_strbuf_get (&op.buf_asm));
+					idx = (matchcount)? tidx + 1: idx + 1;
+					matchcount = 0;
+					r_list_append (hits, hit);
+					continue;
+				}
+				r_anal_op_fini (&analop);
+				idx ++; // TODO: honor mininstrsz
+				continue;
+			} else if (mode == 'e') {
 				RAnalOp analop = {0};
 				if (r_anal_op (core->anal, &analop, addr, buf + idx, 15, R_ANAL_OP_MASK_ESIL) < 1) {
 					idx ++; // TODO: honor mininstrsz
@@ -143,9 +197,13 @@ R_API RList *r_core_asm_strsearch(RCore *core, const char *input, ut64 from, ut6
 				//opsz = op.size;
 				opst = strdup (r_strbuf_get (&op.buf_asm));
 			}
-			matches = strcmp (opst, "invalid") && strcmp (opst, "unaligned");
+			if (opst) {
+				matches = strcmp (opst, "invalid") && strcmp (opst, "unaligned");
+			}
 			if (matches && tokens[matchcount]) {
-				if (!regexp) {
+				if (mode == 'a') { // check for case sensitive
+					matches = !r_str_ncasecmp (opst, tokens[matchcount], strlen (tokens[matchcount]));
+				} else if (!regexp) {
 					matches = strstr (opst, tokens[matchcount]) != NULL;
 				} else {
 					rx = r_regex_new (tokens[matchcount], "");
@@ -168,8 +226,7 @@ R_API RList *r_core_asm_strsearch(RCore *core, const char *input, ut64 from, ut6
 					}
 					if (!(hit = r_core_asm_hit_new ())) {
 						r_list_purge (hits);
-						free (hits);
-						hits = NULL;
+						R_FREE (hits);
 						goto beach;
 					}
 					hit->addr = addr;
@@ -178,7 +235,7 @@ R_API RList *r_core_asm_strsearch(RCore *core, const char *input, ut64 from, ut6
 						r_core_asm_hit_free (hit);
 						goto beach;
 					}
-					code[strlen (code)-2] = 0;
+					code[strlen (code) - 2] = 0;
 					hit->code = strdup (code);
 					r_list_append (hits, hit);
 					R_FREE (code);
@@ -336,8 +393,7 @@ static int handle_forward_disassemble(RCore* core, RList *hits, ut8* buf, ut64 l
 				r_list_add_sorted (hits, hit, ((RListComparator)rcoreasm_address_comparator));
 				IFDBG eprintf("Pruned %u hits from list in fwd sweep.\n", prune_results);
 			} else {
-				free (hit);
-				hit = NULL;
+				R_FREE (hit);
 			}
 		}
 
@@ -423,14 +479,13 @@ static int is_hit_inrange(RCoreAsmHit *hit, ut64 start_range, ut64 end_range){
 
 R_API RList *r_core_asm_bwdisassemble(RCore *core, ut64 addr, int n, int len) {
 	RAsmOp op;
-	// len = n * 32;
 	// if (n > core->blocksize) n = core->blocksize;
 	ut64 at;
 	ut32 idx = 0, hit_count;
 	int numinstr, asmlen, ii;
 	const int addrbytes = core->io->addrbytes;
 	RAsmCode *c;
-	RList *hits = r_core_asm_hit_list_new();
+	RList *hits = r_core_asm_hit_list_new ();
 	if (!hits) {
 		return NULL;
 	}
@@ -459,15 +514,15 @@ R_API RList *r_core_asm_bwdisassemble(RCore *core, ut64 addr, int n, int len) {
 		if (r_cons_is_breaked ()) {
 			break;
 		}
-		c = r_asm_mdisassemble (core->assembler, buf+(len-idx), idx);
-		if (strstr (c->buf_asm, "invalid") || strstr (c->buf_asm, ".byte")) {
+		c = r_asm_mdisassemble (core->assembler, buf + len - idx, idx);
+		if (strstr (c->assembly, "invalid") || strstr (c->assembly, ".byte")) {
 			r_asm_code_free(c);
 			continue;
 		}
 		numinstr = 0;
-		asmlen = strlen (c->buf_asm);
-		for(ii = 0; ii < asmlen; ++ii) {
-			if (c->buf_asm[ii] == '\n') {
+		asmlen = strlen (c->assembly);
+		for (ii = 0; ii < asmlen; ii++) {
+			if (c->assembly[ii] == '\n') {
 				++numinstr;
 			}
 		}

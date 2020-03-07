@@ -126,7 +126,7 @@ R_API void r_egg_lang_init(REgg *egg) {
 	egg->lang.varsize = 'l';
 	/* do call or inline it ? */	// BOOL
 	egg->lang.docall = 1;
-	egg->lang.line = 1;	
+	egg->lang.line = 1;
 	egg->lang.file = "stdin";
 	egg->lang.oc = '\n';
 	egg->lang.mode = NORMAL;
@@ -167,8 +167,7 @@ R_API void r_egg_lang_include_init(REgg *egg) {
 }
 
 static void rcc_set_callname(REgg *egg, const char *s) {
-	free (egg->lang.callname);
-	egg->lang.callname = NULL;
+	R_FREE (egg->lang.callname);
 	egg->lang.nargs = 0;
 	egg->lang.callname = trim (strdup (skipspaces (s)));
 	egg->lang.pushargs = !((!strcmp (s, "goto")) || (!strcmp (s, "break")));
@@ -414,13 +413,26 @@ static void rcc_element(REgg *egg, char *str) {
 				eprintf ("global-buffer-overflow in syscalls\n");
 				break;
 			}
+			{
+			bool found = false;
+			int idx = egg->lang.nsyscalls;
+			for (i = 0; i < egg->lang.nsyscalls; i++) {
+				if (!strcmp (egg->lang.dstvar, egg->lang.syscalls[i].name)) {
+					idx = i;
+					found = true;
+					break;
+				}
+			}
 			// XXX the mem for name and arg are not freed - MEMLEAK
-			R_FREE (egg->lang.syscalls[egg->lang.nsyscalls].name);
-			R_FREE (egg->lang.syscalls[egg->lang.nsyscalls].arg);
-			egg->lang.syscalls[egg->lang.nsyscalls].name = strdup (egg->lang.dstvar);
-			egg->lang.syscalls[egg->lang.nsyscalls].arg = strdup (str);
-			egg->lang.nsyscalls++;
+			R_FREE (egg->lang.syscalls[idx].name);
+			R_FREE (egg->lang.syscalls[idx].arg);
+			egg->lang.syscalls[idx].name = strdup (egg->lang.dstvar);
+			egg->lang.syscalls[idx].arg = strdup (str);
+			if (!found) {
+				egg->lang.nsyscalls++;
+			}
 			R_FREE (egg->lang.dstvar);
+			}
 			break;
 		case GOTO:
 			egg->lang.elem[egg->lang.elem_n] = 0;
@@ -503,7 +515,6 @@ static void rcc_pushstr(REgg *egg, char *str, int filter) {
 					dotrim = 3;
 					break;
 				default:
-					dotrim = 0;
 					break;
 				}
 				if (dotrim) {
@@ -518,8 +529,7 @@ static void rcc_pushstr(REgg *egg, char *str, int filter) {
 	len = strlen (str);
 	j = (len - len % e->size) + e->size;
 	e->set_string (egg, egg->lang.dstvar, str, j);
-	free (egg->lang.dstvar);
-	egg->lang.dstvar = NULL;
+	R_FREE (egg->lang.dstvar);
 }
 
 R_API char *r_egg_mkvar(REgg *egg, char *out, const char *_str, int delta) {
@@ -745,8 +755,7 @@ static void set_nested(REgg *egg, const char *s) {
 	/** clear inner levels **/
 	for (i = 1; i < 10; i++) {
 		// egg->lang.nestedi[context+i] = 0;
-		free (egg->lang.nested[CTX + i]);
-		egg->lang.nested[CTX + i] = NULL;
+		R_FREE (egg->lang.nested[CTX + i]);
 	}
 }
 
@@ -786,7 +795,7 @@ static void rcc_context(REgg *egg, int delta) {
 // eprintf ("Callname is (%s)\n", callname);
 		const char *elm = skipspaces (egg->lang.elem);
 		// const char *cn = callname;
-		// seems cn is useless in nowdays content
+		// seems cn is useless in nowadays content
 // if (egg->lang.nested[context-1])
 #if 0
 		if (delta < 0 && context > 0) {
@@ -915,7 +924,9 @@ static int parsedatachar(REgg *egg, char c) {
 			}
 		}
 	}
-	egg->lang.dstval[egg->lang.ndstval++] = c;
+	if (egg->lang.dstval) {
+		egg->lang.dstval[egg->lang.ndstval++] = c;
+	}
 	return 0;
 }
 
@@ -983,9 +994,8 @@ static void rcc_next(REgg *egg) {
 			eprintf ("Cannot find include file '%s'\n", egg->lang.elem);
 			return;
 		}
-		free (egg->lang.includefile);
-		free (egg->lang.includedir);
-		egg->lang.includefile = egg->lang.includedir = NULL;
+		R_FREE (egg->lang.includefile);
+		R_FREE (egg->lang.includedir);
 		rcc_reset_callname (egg);
 		p = q = r_file_slurp (path, NULL);
 		if (p) {
@@ -1053,7 +1063,7 @@ static void rcc_next(REgg *egg) {
 			rcc_printf ("  cmp $0, %%eax\n");	// XXX MUST SUPPORT != 0 COMPARE HERE
 			/* TODO : Simplify!! */
 			// if (pushvar)
-			// printf("  push %s /* wihle push */\n", pushvar);
+			// printf("  push %s /* while push */\n", pushvar);
 			if (egg->lang.lastctxdelta < 0) {
 				rcc_printf ("  jnz %s\n", get_frame_label (1));
 			} else {
@@ -1195,8 +1205,7 @@ static void rcc_next(REgg *egg) {
 				        if (egg->lang.varxs=='&')
 				            e->load_ptr (egg, eq);
 				        if (eq) {
-				            free (eq);
-				            eq = NULL;
+				            R_FREE (eq);
 				        }
 				        type = ' ';
 				    } else type = '$';
@@ -1316,6 +1325,11 @@ R_API int r_egg_lang_parsechar(REgg *egg, char c) {
 			break;
 		case '{':
 			if (CTX > 0) {
+				if (CTX > 31 || CTX < 0) {
+					eprintf ("Sinking before overflow\n");
+					CTX = 0;
+					break;
+				}
 				// r_egg_printf (egg, " %s:\n", get_frame_label (0));
 				if (egg->lang.nested_callname[CTX] && strstr (egg->lang.nested_callname[CTX], "if") &&
 				    strstr (egg->lang.elem, "else")) {

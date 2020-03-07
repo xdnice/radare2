@@ -135,6 +135,9 @@ R_API int r_reg_fit_arena(RReg *reg) {
 
 	for (i = 0; i < R_REG_TYPE_LAST; i++) {
 		arena = reg->regset[i].arena;
+		if (!arena) {
+			continue;
+		}
 		newsize = 0;
 		r_list_foreach (reg->regset[i].regs, iter, r) {
 			// XXX: bits2bytes doesnt seems to work fine
@@ -142,8 +145,7 @@ R_API int r_reg_fit_arena(RReg *reg) {
 			newsize = R_MAX (size, newsize);
 		}
 		if (newsize < 1) {
-			free (arena->bytes);
-			arena->bytes = NULL;
+			R_FREE (arena->bytes);
 			arena->size = 0;
 		} else {
 			ut8 *buf = realloc (arena->bytes, newsize);
@@ -167,8 +169,7 @@ R_API RRegArena *r_reg_arena_new(int size) {
 			size = 1;
 		}
 		if (!(arena->bytes = calloc (1, size + 8))) {
-			free (arena);
-			arena = NULL;
+			R_FREE (arena);
 		} else {
 			arena->size = size;
 		}
@@ -310,7 +311,7 @@ R_API int r_reg_arena_set_bytes(RReg *reg, const char *str) {
 	r_hex_str2bin (str, bin_str);
 
 	int i, n = 0; //n - cumulative sum of arena's sizes
-	for (i = 0; i < R_REG_TYPE_LAST; ++i) {
+	for (i = 0; i < R_REG_TYPE_LAST; i++) {
 		int sz = reg->regset[i].arena->size;
 		int bl = bin_str_len - n; //bytes left
 		int bln = bl - n;

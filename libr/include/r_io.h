@@ -1,14 +1,11 @@
-/* radare2 - LGPL - Copyright 2017-2018 - condret, pancake, alvaro */
+/* radare2 - LGPL - Copyright 2017-2019 - condret, pancake, alvaro */
 
 #ifndef R2_IO_H
 #define R2_IO_H
 
 #include "r_list.h"
-#include <r_util/r_idpool.h>
-#include <r_util/r_cache.h>
-#include <r_util/r_buf.h>
+#include <r_util.h>
 #include "r_socket.h"
-#include "r_util.h"
 #include "r_vector.h"
 
 #define R_IO_SEEK_SET	0
@@ -20,7 +17,6 @@
 #if HAVE_PTRACE
 
 #if __sun
-#include <unistd.h>
 #include <sys/types.h>
 #else
 #if DEBUGGER && HAVE_PTRACE
@@ -28,14 +24,20 @@
 #endif
 #endif
 
-#if defined(__GLIBC__) && defined(__linux__)
+#if (defined(__GLIBC__) && defined(__linux__))
 typedef enum __ptrace_request r_ptrace_request_t;
+typedef void * r_ptrace_data_t;
+#define R_PTRACE_NODATA NULL
+#else
+#if __ANDROID__
+typedef int r_ptrace_request_t;
 typedef void * r_ptrace_data_t;
 #define R_PTRACE_NODATA NULL
 #else
 typedef int r_ptrace_request_t;
 typedef int r_ptrace_data_t;
 #define R_PTRACE_NODATA 0
+#endif
 #endif
 #endif
 
@@ -73,7 +75,7 @@ typedef struct r_io_undo_w_t {
 } RIOUndoWrite;
 
 typedef struct r_io_t {
-	struct r_io_desc_t *desc;
+	struct r_io_desc_t *desc; // XXX deprecate... we should use only the fd integer, not hold a weak pointer
 	ut64 off;
 	int bits;
 	int va;		//all of this config stuff must be in 1 int
@@ -87,11 +89,10 @@ typedef struct r_io_t {
 	int p_cache;
 	int debug;
 //#warning remove debug from RIO
-	RIDPool *sec_ids;
 	RIDPool *map_ids;
 	SdbList *maps; //from tail backwards maps with higher priority are found
 	RPVector map_skyline; // map parts that are not covered by others
-	SdbList *sections;
+	RPVector map_skyline_shadow; // map parts that are not covered by others
 	RIDStorage *files;
 	RCache *buffer;
 	RList *cache;	//sdblist?
@@ -101,8 +102,11 @@ typedef struct r_io_t {
 	RIOUndo undo;
 	SdbList *plugins;
 	char *runprofile;
-#ifdef USE_PTRACE_WRAP
+#if USE_PTRACE_WRAP
 	struct ptrace_wrap_instance_t *ptrace_wrap;
+#endif
+#if __WINDOWS__
+	struct w32dbg_wrap_instance_t *w32dbg_wrap;
 #endif
 	char *args;
 	void *user;
@@ -150,20 +154,21 @@ typedef struct {
 #define RMT_REPLY  0x80
 
 typedef struct r_io_plugin_t {
-	char *name;
-	char *desc;
-	char *version;
-	char *author;
-	char *license;
+	const char *name;
+	const char *desc;
+	const char *version;
+	const char *author;
+	const char *license;
 	void *widget;
+	const char *uris;
 	int (*listener)(RIODesc *io);
 	int (*init)(void);
 	RIOUndo undo;
 	bool isdbg;
 	// int (*is_file_opened)(RIO *io, RIODesc *fd, const char *);
 	char *(*system)(RIO *io, RIODesc *fd, const char *);
-	RIODesc* (*open)(RIO *io, const char *, int rw, int mode);
-	RList* /*RIODesc* */ (*open_many)(RIO *io, const char *, int rw, int mode);
+	RIODesc* (*open)(RIO *io, const char *, int perm, int mode);
+	RList* /*RIODesc* */ (*open_many)(RIO *io, const char *, int perm, int mode);
 	int (*read)(RIO *io, RIODesc *fd, ut8 *buf, int count);
 	ut64 (*lseek)(RIO *io, RIODesc *fd, ut64 offset, int whence);
 	int (*write)(RIO *io, RIODesc *fd, const ut8 *buf, int count);
@@ -185,7 +190,7 @@ typedef struct r_io_map_t {
 	int perm;
 	ut32 id;
 	RInterval itv;
-	ut64 delta; //this delta means paddr when talking about section
+	ut64 delta; // paddr = itv.addr + delta
 	char *name;
 } RIOMap;
 
@@ -193,29 +198,6 @@ typedef struct r_io_map_skyline_t {
 	RIOMap *map;
 	RInterval itv;
 } RIOMapSkyline;
-
-// XXX must be deprecated maps should be enough
-typedef struct r_io_section_t {
-	char *name;
-	ut64 paddr;
-	ut64 size;
-	ut64 vaddr;
-	ut64 vsize;
-	int perm;
-	ut32 id;
-	ut32 bin_id;
-	int arch;
-	int bits;
-	int fd;
-	ut32 filemap;
-	ut32 memmap;
-} RIOSection;
-
-typedef enum {
-	R_IO_SECTION_APPLY_FOR_PATCH,
-	R_IO_SECTION_APPLY_FOR_ANALYSIS,
-	R_IO_SECTION_APPLY_FOR_EMULATOR
-} RIOSectionApplyMethod;
 
 typedef struct r_io_cache_t {
 	RInterval itv;
@@ -245,6 +227,9 @@ typedef int (*RIOFdOpen) (RIO *io, const char *uri, int flags, int mode);
 typedef bool (*RIOFdClose) (RIO *io, int fd);
 typedef ut64 (*RIOFdSeek) (RIO *io, int fd, ut64 addr, int whence);
 typedef ut64 (*RIOFdSize) (RIO *io, int fd);
+typedef bool (*RIOFdResize) (RIO *io, int fd, ut64 newsize);
+typedef ut64 (*RIOP2V) (RIO *io, ut64 pa);
+typedef ut64 (*RIOV2P) (RIO *io, ut64 va);
 typedef int (*RIOFdRead) (RIO *io, int fd, ut8 *buf, int len);
 typedef int (*RIOFdWrite) (RIO *io, int fd, const ut8 *buf, int len);
 typedef int (*RIOFdReadAt) (RIO *io, int fd, ut64 addr, ut8 *buf, int len);
@@ -254,12 +239,13 @@ typedef const char *(*RIOFdGetName) (RIO *io, int fd);
 typedef RList *(*RIOFdGetMap) (RIO *io, int fd);
 typedef bool (*RIOFdRemap) (RIO *io, int fd, ut64 addr);
 typedef bool (*RIOIsValidOff) (RIO *io, ut64 addr, int hasperm);
+typedef RIOMap *(*RIOMapGet) (RIO *io, ut64 addr);
+typedef RIOMap *(*RIOMapGetPaddr) (RIO *io, ut64 paddr);
 typedef bool (*RIOAddrIsMapped) (RIO *io, ut64 addr);
-typedef SdbList *(*RIOSectionVgetSecsAt) (RIO *io, ut64 vaddr);
-typedef RIOSection *(*RIOSectionVgetSec) (RIO *io, ut64 vaddr);
-typedef RIOSection *(*RIOSectionAdd) (RIO *io, ut64 addr, ut64 vaddr, ut64 size, ut64 vsize, int rwx, const char *name, ut32 bin_id, int fd);
+typedef RIOMap *(*RIOMapAdd) (RIO *io, int fd, int flags, ut64 delta, ut64 addr, ut64 size);
 #if HAVE_PTRACE
 typedef long (*RIOPtraceFn) (RIO *io, r_ptrace_request_t request, pid_t pid, void *addr, r_ptrace_data_t data);
+typedef void *(*RIOPtraceFuncFn) (RIO *io, void *(*func)(void *), void *user);
 #endif
 
 typedef struct r_io_bind_t {
@@ -278,6 +264,7 @@ typedef struct r_io_bind_t {
 	RIOFdClose fd_close;
 	RIOFdSeek fd_seek;	//needed for esil
 	RIOFdSize fd_size;
+	RIOFdResize fd_resize;
 	RIOFdRead fd_read;	//needed for esil
 	RIOFdWrite fd_write;	//needed for esil
 	RIOFdReadAt fd_read_at;
@@ -288,29 +275,37 @@ typedef struct r_io_bind_t {
 	RIOFdRemap fd_remap;
 	RIOIsValidOff is_valid_offset;
 	RIOAddrIsMapped addr_is_mapped;
-	RIOSectionVgetSecsAt sections_vget;
-	RIOSectionVgetSec sect_vget;
-	RIOSectionAdd section_add;
+	RIOMapGet map_get;
+	RIOMapGetPaddr map_get_paddr;
+	RIOMapAdd map_add;
+	RIOV2P v2p;
+	RIOP2V p2v;
 #if HAVE_PTRACE
 	RIOPtraceFn ptrace;
+	RIOPtraceFuncFn ptrace_func;
 #endif
 } RIOBind;
 
 //map.c
 R_API RIOMap *r_io_map_new(RIO *io, int fd, int flags, ut64 delta, ut64 addr, ut64 size);
-R_API ut64 r_io_map_next_address(RIO* io, ut64 addr);
 R_API void r_io_map_init (RIO *io);
 R_API bool r_io_map_remap (RIO *io, ut32 id, ut64 addr);
 R_API bool r_io_map_remap_fd (RIO *io, int fd, ut64 addr);
+R_API ut64 r_io_map_location(RIO *io, ut64 size);
 R_API bool r_io_map_exists (RIO *io, RIOMap *map);
 R_API bool r_io_map_exists_for_id (RIO *io, ut32 id);
 R_API RIOMap *r_io_map_resolve (RIO *io, ut32 id);
 R_API RIOMap *r_io_map_add(RIO *io, int fd, int flags, ut64 delta, ut64 addr, ut64 size);
-R_API RIOMap *r_io_map_get (RIO *io, ut64 addr);		//returns the map at vaddr with the highest priority
-R_API RIOMap *r_io_map_get_paddr (RIO *io, ut64 paddr);		//returns the map at paddr with the highest priority
+// same as r_io_map_add but used when many maps need to be added. Call r_io_update when all maps have been added.
+R_API RIOMap *r_io_map_add_batch(RIO *io, int fd, int flags, ut64 delta, ut64 addr, ut64 size);
+R_API RIOMap *r_io_map_get(RIO *io, ut64 addr);		//returns the map at vaddr with the highest priority
+// update the internal state of RIO after a series of _batch operations
+R_API void r_io_update(RIO *io);
+R_API bool r_io_map_is_mapped(RIO* io, ut64 addr);
+R_API RIOMap *r_io_map_get_paddr(RIO *io, ut64 paddr);		//returns the map at paddr with the highest priority
 R_API void r_io_map_reset(RIO* io);
-R_API bool r_io_map_del (RIO *io, ut32 id);
-R_API bool r_io_map_del_for_fd (RIO *io, int fd);
+R_API bool r_io_map_del(RIO *io, ut32 id);
+R_API bool r_io_map_del_for_fd(RIO *io, int fd);
 R_API bool r_io_map_depriorize(RIO* io, ut32 id);
 R_API bool r_io_map_priorize (RIO *io, ut32 id);
 R_API bool r_io_map_priorize_for_fd (RIO *io, int fd);
@@ -319,9 +314,17 @@ R_API void r_io_map_fini (RIO *io);
 R_API bool r_io_map_is_in_range (RIOMap *map, ut64 from, ut64 to);
 R_API void r_io_map_set_name (RIOMap *map, const char *name);
 R_API void r_io_map_del_name (RIOMap *map);
-R_API RIOMap *r_io_map_add_next_available(RIO *io, int fd, int flags, ut64 delta, ut64 addr, ut64 size, ut64 load_align);
 R_API RList* r_io_map_get_for_fd(RIO *io, int fd);
 R_API bool r_io_map_resize(RIO *io, ut32 id, ut64 newsize);
+
+// next free address to place a map.. maybe just unify
+R_API ut64 r_io_map_next_available(RIO* io, ut64 addr, ut64 size, ut64 load_align);
+R_API ut64 r_io_map_next_address(RIO* io, ut64 addr);
+
+// p2v/v2p
+
+R_API ut64 r_io_p2v(RIO *io, ut64 pa);
+R_API ut64 r_io_v2p(RIO *io, ut64 va);
 
 //io.c
 R_API RIO *r_io_new (void);
@@ -395,7 +398,6 @@ R_API void r_io_wundo_set_all(RIO *io, int set);
 R_API int r_io_wundo_set(RIO *io, int n, int set);
 
 //desc.c
-R_API bool r_io_desc_init (RIO *io);
 R_API RIODesc *r_io_desc_new (RIO *io, RIOPlugin *plugin, const char *uri, int flags, int mode, void *data);
 R_API RIODesc *r_io_desc_open (RIO *io, const char *uri, int flags, int mode);
 R_API RIODesc *r_io_desc_open_plugin (RIO *io, RIOPlugin *plugin, const char *uri, int flags, int mode);
@@ -418,7 +420,10 @@ R_API int r_io_desc_get_tid (RIODesc *desc);
 R_API bool r_io_desc_get_base (RIODesc *desc, ut64 *base);
 R_API int r_io_desc_read_at (RIODesc *desc, ut64 addr, ut8 *buf, int len);
 R_API int r_io_desc_write_at (RIODesc *desc, ut64 addr, const ut8 *buf, int len);
-R_API bool r_io_desc_fini (RIO *io);
+
+/* lifecycle */
+R_IPI bool r_io_desc_init (RIO *io);
+R_IPI bool r_io_desc_fini (RIO *io);
 
 /* io/cache.c */
 R_API int r_io_cache_invalidate(RIO *io, ut64 from, ut64 to);
@@ -430,25 +435,6 @@ R_API int r_io_cache_list(RIO *io, int rad);
 R_API void r_io_cache_reset(RIO *io, int set);
 R_API bool r_io_cache_write(RIO *io, ut64 addr, const ut8 *buf, int len);
 R_API bool r_io_cache_read(RIO *io, ut64 addr, ut8 *buf, int len);
-
-/* io/section.c */
-R_API void r_io_section_init (RIO *io);
-R_API void r_io_section_fini (RIO *io);
-R_API int r_io_section_exists_for_id (RIO *io, ut32 id);
-R_API RIOSection *r_io_section_add (RIO *io, ut64 addr, ut64 vaddr, ut64 size, ut64 vsize, int rwx, const char *name, ut32 bin_id, int fd);
-R_API RIOSection *r_io_section_get_i (RIO *io, ut32 id);
-R_API SdbList *r_io_section_bin_get (RIO *io, ut32 bin_id);
-R_API void r_io_section_cleanup (RIO *io);
-R_API SdbList *r_io_sections_get (RIO *io, ut64 addr);
-R_API SdbList *r_io_sections_vget (RIO *io, ut64 vaddr);
-R_API const char *r_io_section_get_archbits (RIO *io, ut64 vaddr, int *bits);
-R_API bool r_io_section_priorize (RIO *io, ut32 id);
-R_API bool r_io_section_priorize_bin (RIO *io, ut32 bin_id);
-R_API bool r_io_section_apply (RIO *io, ut32 id, RIOSectionApplyMethod method);
-R_API bool r_io_section_apply_bin (RIO *io, ut32 bin_id, RIOSectionApplyMethod method);
-R_API RIOSection* r_io_section_get(RIO *io, ut64 paddr);
-R_API RIOSection* r_io_section_vget(RIO *io, ut64 vaddr);
-R_API ut64 r_io_section_get_paddr_at(RIO *io, ut64 addr);
 
 /* io/p_cache.c */
 R_API bool r_io_desc_cache_init (RIODesc *desc);
@@ -499,6 +485,7 @@ R_API bool r_io_write_i (RIO* io, ut64 addr, ut64 *val, int size, bool endian);
 #if HAVE_PTRACE
 R_API long r_io_ptrace(RIO *io, r_ptrace_request_t request, pid_t pid, void *addr, r_ptrace_data_t data);
 R_API pid_t r_io_ptrace_fork(RIO *io, void (*child_callback)(void *), void *child_callback_user);
+R_API void *r_io_ptrace_func(RIO *io, void *(*func)(void *), void *user);
 #endif
 
 extern RIOPlugin r_io_plugin_procpid;

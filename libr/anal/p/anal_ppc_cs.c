@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2013-2018 - pancake */
+/* radare2 - LGPL - Copyright 2013-2019 - pancake */
 
 #include <r_anal.h>
 #include <r_lib.h>
@@ -65,6 +65,27 @@ static const char* cmask32(const char *mb_c, const char *me_c) {
 	}
 	snprintf (cmask, sizeof (cmask), "0x%"PFMT32x"", mask32 (mb, me));
 	return cmask;
+}
+
+static const char *getreg(struct Getarg *gop, int n) {
+	cs_insn *insn = gop->insn;
+	csh handle = gop->handle;
+
+	if (n < 0 || n >= 8) {
+		return NULL;
+	}
+	cs_ppc_op op = INSOP (n);
+	switch (op.type) {
+	case PPC_OP_REG:
+		return cs_reg_name (handle, op.reg);
+	case PPC_OP_MEM:
+		return cs_reg_name (handle, op.mem.base);
+	case PPC_OP_INVALID:
+	case PPC_OP_IMM:
+	case PPC_OP_CRX: // Condition Register field
+		return NULL;
+	}
+	return NULL;
 }
 
 static char *getarg2(struct Getarg *gop, int n, const char *setstr) {
@@ -202,6 +223,7 @@ static void opex(RStrBuf *buf, csh handle, cs_insn *insn) {
 #define PPCSPR(n) getspr(&gop, n)
 #define ARG(n) getarg2(&gop, n, "")
 #define ARG2(n,m) getarg2(&gop, n, m)
+#define REG2(n) getreg(&gop, n)
 
 static int set_reg_profile(RAnal *anal) {
 	const char *p = NULL;
@@ -209,7 +231,9 @@ static int set_reg_profile(RAnal *anal) {
 		p =
 			"=PC	pc\n"
 			"=SP	r1\n"
+			"=BP	r31\n"
 			"=SR	srr1\n" // status register ??
+			"=SN	r3\n" // also for ret
 			"=A0	r3\n" // also for ret
 			"=A1	r4\n"
 			"=A2	r5\n"
@@ -534,11 +558,12 @@ static void op_fillval(RAnalOp *op, csh handle, cs_insn *insn) {
 	}
 }
 
-static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
+static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len, RAnalOpMask mask) {
 	static csh handle = 0;
 	static int omode = -1, obits = -1;
 	int n, ret;
 	cs_insn *insn;
+	char *op1;
 	int mode = (a->bits == 64) ? CS_MODE_64 : (a->bits == 32) ? CS_MODE_32 : 0;
 	mode |= a->big_endian ? CS_MODE_BIG_ENDIAN : CS_MODE_LITTLE_ENDIAN;
 
@@ -581,7 +606,9 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 	if (n < 1) {
 		op->type = R_ANAL_OP_TYPE_ILL;
 	} else {
-		opex (&op->opex, handle, insn);
+		if (mask & R_ANAL_OP_MASK_OPEX) {
+			opex (&op->opex, handle, insn);
+		}
 		struct Getarg gop = {
 			.handle = handle,
 			.insn = insn,
@@ -601,6 +628,10 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 		case PPC_INS_CMPLWI:
 		case PPC_INS_CMPW:
 		case PPC_INS_CMPWI:
+#if CS_API_MAJOR > 4
+		case PPC_INS_CMP:
+		case PPC_INS_CMPI:
+#endif
 			op->type = R_ANAL_OP_TYPE_CMP;
 			op->sign = true;
 			if (ARG (2)[0] == '\0') {
@@ -675,30 +706,50 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 			esilprintf (op, ",");
 			break;
 		case PPC_INS_STW:
-		case PPC_INS_STWU:
 		case PPC_INS_STWUX:
 		case PPC_INS_STWX:
 		case PPC_INS_STWCX:
 			op->type = R_ANAL_OP_TYPE_STORE;
 			esilprintf (op, "%s,%s", ARG (0), ARG2 (1, "=[4]"));
 			break;
+		case PPC_INS_STWU:
+			op->type = R_ANAL_OP_TYPE_STORE;
+			op1 = ARG (1);
+			op1[strlen (op1) - 1] = 0;
+			esilprintf (op, "%s,%s,=[4],%s=", ARG (0), op1, op1);
+			break;
 		case PPC_INS_STWBRX:
 			op->type = R_ANAL_OP_TYPE_STORE;
 			break;
 		case PPC_INS_STB:
-		case PPC_INS_STBU:
 			op->type = R_ANAL_OP_TYPE_STORE;
 			esilprintf (op, "%s,%s", ARG (0), ARG2 (1, "=[1]"));
 			break;
+		case PPC_INS_STBU:
+			op->type = R_ANAL_OP_TYPE_STORE;
+			op1 = ARG (1);
+			op1[strlen (op1) - 1] = 0;
+			esilprintf (op, "%s,%s,=[1],%s=", ARG (0), op1, op1);
+			break;
 		case PPC_INS_STH:
-		case PPC_INS_STHU:
 			op->type = R_ANAL_OP_TYPE_STORE;
 			esilprintf (op, "%s,%s", ARG (0), ARG2 (1, "=[2]"));
 			break;
+		case PPC_INS_STHU:
+			op->type = R_ANAL_OP_TYPE_STORE;
+			op1 = ARG (1);
+			op1[strlen (op1) - 1] = 0;
+			esilprintf (op, "%s,%s,=[2],%s=", ARG (0), op1, op1);
+			break;
 		case PPC_INS_STD:
-		case PPC_INS_STDU:
 			op->type = R_ANAL_OP_TYPE_STORE;
 			esilprintf (op, "%s,%s", ARG (0), ARG2 (1, "=[8]"));
+			break;
+		case PPC_INS_STDU:
+			op->type = R_ANAL_OP_TYPE_STORE;
+			op1 = ARG (1);
+			op1[strlen (op1) - 1] = 0;
+			esilprintf (op, "%s,%s,=[8],%s=", ARG (0), op1, op1);
 			break;
 		case PPC_INS_LBZ:
 #if CS_API_MAJOR >= 4
@@ -706,6 +757,11 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 #endif
 		case PPC_INS_LBZU:
 		case PPC_INS_LBZUX:
+			op->type = R_ANAL_OP_TYPE_LOAD;
+			op1 = ARG (1);
+			op1[strlen (op1) - 1] = 0;
+			esilprintf (op, "%s,[1],%s,=,%s=", op1, ARG (0), op1);
+			break;
 		case PPC_INS_LBZX:
 			op->type = R_ANAL_OP_TYPE_LOAD;
 			esilprintf (op, "%s,%s,=", ARG2 (1, "[1]"), ARG (0));
@@ -717,6 +773,11 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 #endif
 		case PPC_INS_LDU:
 		case PPC_INS_LDUX:
+			op->type = R_ANAL_OP_TYPE_LOAD;
+			op1 = ARG (1);
+			op1[strlen (op1) - 1] = 0;
+			esilprintf (op, "%s,[8],%s,=,%s=", op1, ARG (0), op1);
+			break;
 		case PPC_INS_LDX:
 			op->type = R_ANAL_OP_TYPE_LOAD;
 			esilprintf (op, "%s,%s,=", ARG2 (1, "[8]"), ARG (0));
@@ -744,7 +805,9 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 		case PPC_INS_LHZ:
 		case PPC_INS_LHZU:
 			op->type = R_ANAL_OP_TYPE_LOAD;
-			esilprintf (op, "%s,%s,=", ARG2 (1, "[2]"), ARG (0));
+			op1 = ARG (1);
+			op1[strlen (op1) - 1] = 0;
+			esilprintf (op, "%s,[2],%s,=,%s=", op1, ARG (0), op1);
 			break;
 		case PPC_INS_LHBRX:
 			op->type = R_ANAL_OP_TYPE_LOAD;
@@ -757,11 +820,16 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 #if CS_API_MAJOR >= 4
 		case PPC_INS_LWZCIX:
 #endif
-		case PPC_INS_LWZU:
-		case PPC_INS_LWZUX:
 		case PPC_INS_LWZX:
 			op->type = R_ANAL_OP_TYPE_LOAD;
 			esilprintf (op, "%s,%s,=", ARG2 (1, "[4]"), ARG (0));
+			break;
+		case PPC_INS_LWZU:
+		case PPC_INS_LWZUX:
+			op->type = R_ANAL_OP_TYPE_LOAD;
+			op1 = ARG (1);
+			op1[strlen(op1) - 1] = 0;
+			esilprintf (op, "%s,[4],%s,=,%s=", op1, ARG (0), op1);
 			break;
 		case PPC_INS_LWBRX:
 			op->type = R_ANAL_OP_TYPE_LOAD;
@@ -797,6 +865,15 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 			op->type = R_ANAL_OP_TYPE_ADD;
 			esilprintf (op, "%s,%s,+,%s,=", ARG (2), ARG (1), ARG (0));
 			break;
+		case PPC_INS_CRCLR:
+		case PPC_INS_CRSET:
+		case PPC_INS_CRMOVE:
+		case PPC_INS_CRXOR:
+		case PPC_INS_CRNOR:
+		case PPC_INS_CRNOT:
+			// reset conditional bits
+			op->type = R_ANAL_OP_TYPE_MOV;
+			break;
 		case PPC_INS_ADDC:
 		case PPC_INS_ADDIC:
 			op->type = R_ANAL_OP_TYPE_ADD;
@@ -823,8 +900,9 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 			break;
 		case PPC_INS_B:
 		case PPC_INS_BC:
-			op->jump = ARG (1)[0] == '\0' ? IMM (0) : IMM (1);
+		case PPC_INS_BA:
 			op->type = R_ANAL_OP_TYPE_CJMP;
+			op->jump = ARG (1)[0] == '\0' ? IMM (0) : IMM (1);
 			op->fail = addr + op->size;
 			switch (insn->detail->ppc.bc) {
 			case PPC_BC_LT:
@@ -880,7 +958,8 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 				break;
 			}
 			break;
-		case PPC_INS_BA:
+		case PPC_INS_BT:
+		case PPC_INS_BF:
 			switch (insn->detail->ppc.operands[0].type) {
 			case PPC_OP_CRX:
 				op->type = R_ANAL_OP_TYPE_CJMP;
@@ -1147,10 +1226,12 @@ static int analop(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
 			esilprintf (op, "%s,%s,<<<,%s,&,%s,=", ARG (2), ARG (1), cmask64 (0, ARG (3)), ARG (0));
 			break;
 		}
-		if (a->fillval) {
+		if (mask & R_ANAL_OP_MASK_VAL) {
 			op_fillval (op, handle, insn);
 		}
-		r_strbuf_fini (&op->esil);
+		if (!(mask & R_ANAL_OP_MASK_ESIL)) {
+			r_strbuf_fini (&op->esil);
+		}
 		cs_free (insn, n);
 		//cs_close (&handle);
 	}
@@ -1164,6 +1245,13 @@ static int archinfo(RAnal *a, int q) {
 	return 4;
 }
 
+static RList *anal_preludes(RAnal *anal) {
+#define KW(d,ds,m,ms) r_list_append (l, r_search_keyword_new((const ut8*)d,ds,(const ut8*)m, ms, NULL))
+	RList *l = r_list_newf ((RListFree)r_search_keyword_free);
+	KW ("\x7c\x08\x02\xa6", 4, NULL, 0);
+	return l;
+}
+
 RAnalPlugin r_anal_plugin_ppc_cs = {
 	.name = "ppc",
 	.desc = "Capstone PowerPC analysis",
@@ -1172,11 +1260,12 @@ RAnalPlugin r_anal_plugin_ppc_cs = {
 	.arch = "ppc",
 	.bits = 32 | 64,
 	.archinfo = archinfo,
+	.preludes = anal_preludes,
 	.op = &analop,
 	.set_reg_profile = &set_reg_profile,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_ppc_cs,

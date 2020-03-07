@@ -26,11 +26,11 @@ static int r_cmd_test_call() {
 RCorePlugin r_core_plugin_test = {
 	.name = "test",
 	.desc = "lalallala",
-	.license = "Apache",
+	.license = "MIT",
 	.call = r_cmd_test_call,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_CORE,
 	.data = &r_core_plugin_test,

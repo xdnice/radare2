@@ -9,17 +9,17 @@
 #include "sdb.h"
 
 #if 0
-static inline SdbKv *kv_at(SdbHt *ht, HtBucket *bt, ut32 i) {
-	return (SdbKv *)((char *)bt->arr + i * ht->elem_size);
+static inline SdbKv *kv_at(HtPP *ht, HtPPBucket *bt, ut32 i) {
+	return (SdbKv *)((char *)bt->arr + i * ht->opt.elem_size);
 }
 
-static inline SdbKv *prev_kv(SdbHt *ht, SdbKv *kv) {
-	return (SdbKv *)((char *)kv - ht->elem_size);
+static inline SdbKv *prev_kv(HtPP *ht, SdbKv *kv) {
+	return (SdbKv *)((char *)kv - ht->opt.elem_size);
 }
 #endif
 
-static inline SdbKv *next_kv(SdbHt *ht, SdbKv *kv) {
-	return (SdbKv *)((char *)kv + ht->elem_size);
+static inline SdbKv *next_kv(HtPP *ht, SdbKv *kv) {
+	return (SdbKv *)((char *)kv + ht->opt.elem_size);
 }
 
 #define BUCKET_FOREACH(ht, bt, j, kv)					\
@@ -228,9 +228,8 @@ SDB_API bool sdb_free(Sdb* s) {
 }
 
 SDB_API const char *sdb_const_get_len(Sdb* s, const char *key, int *vlen, ut32 *cas) {
-	ut32 pos, len, keylen;
+	ut32 pos, len;
 	ut64 now = 0LL;
-	SdbKv *kv;
 	bool found;
 
 	if (cas) {
@@ -243,10 +242,10 @@ SDB_API const char *sdb_const_get_len(Sdb* s, const char *key, int *vlen, ut32 *
 		return NULL;
 	}
 	// TODO: optimize, iterate once
-	keylen = strlen (key);
+	size_t keylen = strlen (key);
 
 	/* search in memory */
-	kv = (SdbKv*) sdb_ht_find_kvp (s->ht, key, &found);
+	SdbKv *kv = (SdbKv*) sdb_ht_find_kvp (s->ht, key, &found);
 	if (found) {
 		if (!sdbkv_value (kv) || !*sdbkv_value (kv)) {
 			return NULL;
@@ -273,7 +272,7 @@ SDB_API const char *sdb_const_get_len(Sdb* s, const char *key, int *vlen, ut32 *
 		return NULL;
 	}
 	(void) cdb_findstart (&s->db);
-	if (cdb_findnext (&s->db, s->ht->hashfn (key), key, keylen) < 1) {
+	if (cdb_findnext (&s->db, s->ht->opt.hashfn (key), key, keylen) < 1) {
 		return NULL;
 	}
 	len = cdb_datalen (&s->db);
@@ -369,15 +368,15 @@ SDB_API int sdb_add(Sdb* s, const char *key, const char *val, ut32 cas) {
 SDB_API bool sdb_exists(Sdb* s, const char *key) {
 	ut32 pos;
 	char ch;
-	SdbKv *kv;
 	bool found;
 	int klen = strlen (key) + 1;
 	if (!s) {
 		return false;
 	}
-	kv = (SdbKv*)sdb_ht_find_kvp (s->ht, key, &found);
+	SdbKv *kv = (SdbKv*)sdb_ht_find_kvp (s->ht, key, &found);
 	if (found && kv) {
-		return *sdbkv_value (kv);
+		char *v = sdbkv_value (kv);
+		return v && *v;
 	}
 	if (s->fd == -1) {
 		return false;
@@ -427,6 +426,10 @@ SDB_API int sdb_open(Sdb *s, const char *file) {
 SDB_API void sdb_close(Sdb *s) {
 	if (s) {
 		if (s->fd != -1) {
+			if (s->db.fd != -1 && s->db.fd == s->fd) {
+				/* close db fd as well */
+				s->db.fd = -1;
+			}
 			close (s->fd);
 			s->fd = -1;
 		}
@@ -789,7 +792,7 @@ SDB_API bool sdb_foreach(Sdb* s, SdbForeachCallback cb, void *user) {
 
 	ut32 i;
 	for (i = 0; i < s->ht->size; ++i) {
-		HtBucket *bt = &s->ht->table[i];
+		HtPPBucket *bt = &s->ht->table[i];
 		SdbKv *kv;
 		ut32 j, count;
 
@@ -836,7 +839,7 @@ SDB_API bool sdb_sync(Sdb* s) {
 
 	/* append new keyvalues */
 	for (i = 0; i < s->ht->size; ++i) {
-		HtBucket *bt = &s->ht->table[i];
+		HtPPBucket *bt = &s->ht->table[i];
 		SdbKv *kv;
 		ut32 j, count;
 
@@ -873,7 +876,7 @@ SDB_API SdbKv *sdb_dump_next(Sdb* s) {
 	}
 	vl--;
 	strncpy (sdbkv_key (&s->tmpkv), k, SDB_KSZ - 1);
-	s->tmpkv.base.key[SDB_KSZ - 1] = '\0';
+	sdbkv_key (&s->tmpkv)[SDB_KSZ - 1] = '\0';
 	free (sdbkv_value (&s->tmpkv));
 	s->tmpkv.base.value = v;
 	s->tmpkv.base.value_len = vl;
@@ -942,7 +945,7 @@ SDB_API bool sdb_dump_dupnext(Sdb* s, char *key, char **value, int *_vlen) {
 	}
 	if (value) {
 		*value = 0;
-		if (vlen >= SDB_MIN_VALUE && vlen < SDB_MAX_VALUE) {
+		if (vlen < SDB_MAX_VALUE) {
 			*value = malloc (vlen + 10);
 			if (!*value) {
 				return false;
@@ -1111,6 +1114,21 @@ SDB_API void sdb_drain(Sdb *s, Sdb *f) {
 		sdb_fini (s, 1);
 		*s = *f;
 		free (f);
+	}
+}
+
+static int copy_foreach_cb(void *user, const char *k, const char *v) {
+	Sdb *dst = user;
+	sdb_set (dst, k, v, 0);
+	return true;
+}
+
+SDB_API void sdb_copy(Sdb *src, Sdb *dst) {
+	sdb_foreach (src, copy_foreach_cb, dst);
+	SdbListIter *it;
+	SdbNs *ns;
+	ls_foreach (src->ns, it, ns) {
+		sdb_copy (ns->sdb, sdb_ns (dst, ns->name, true));
 	}
 }
 

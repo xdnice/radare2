@@ -25,7 +25,7 @@ static int __esil_step(RDebug *dbg) {
 	ut64 pc = 0LL; // getreg("pc")
 	RAnalOp op = {0};
 
-	pc = r_debug_reg_sync(dbg, R_REG_TYPE_GPR, false);
+	r_debug_reg_sync(dbg, R_REG_TYPE_GPR, false);
 	pc = r_debug_reg_get (dbg, "PC");
 	eprintf ("PC = 0x%" PFMT64x "\n", pc);
 /// XXX. hack to trick vaddr issue
@@ -154,7 +154,7 @@ RDebugPlugin r_debug_plugin_esil = {
 	.reg_read = __reg_read,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_DBG,
 	.data = &r_debug_plugin_esil,

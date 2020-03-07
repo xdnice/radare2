@@ -16,6 +16,7 @@ env -0 | while IFS='=' read -r -d '' n v; do
 done
 
 # print extra variables
+print_var DEBPKG "${DEBPKG}"
 print_var CC "${CC}"
 print_var CXX "${CXX}"
 print_var CFLAGS "${CFLAGS}"
@@ -25,5 +26,6 @@ print_var TRAVIS "${TRAVIS}"
 print_var INSTALL_SYSTEM "${INSTALL_SYSTEM}"
 print_var MESON_OPTIONS "${MESON_OPTIONS}"
 print_var COVERAGE "${COVERAGE}"
+print_var ASAN "${ASAN}"
 print_var SHIPPABLE "${SHIPPABLE}"
 print_var CI "${CI}"

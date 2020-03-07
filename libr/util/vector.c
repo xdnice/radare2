@@ -96,8 +96,6 @@ R_API RVector *r_vector_clone(RVector *vec) {
 	return ret;
 }
 
-
-
 R_API void *r_vector_index_ptr(RVector *vec, size_t index) {
 	return (char *)vec->a + vec->elem_size * index;
 }
@@ -108,7 +106,9 @@ R_API void r_vector_assign(RVector *vec, void *p, void *elem) {
 
 R_API void *r_vector_assign_at(RVector *vec, size_t index, void *elem) {
 	void *p = r_vector_index_ptr (vec, index);
-	r_vector_assign (vec, p, elem);
+	if (elem) {
+		r_vector_assign (vec, p, elem);
+	}
 	return p;
 }
 
@@ -122,8 +122,6 @@ R_API void r_vector_remove_at(RVector *vec, size_t index, void *into) {
 		memmove (p, (char *)p + vec->elem_size, vec->elem_size * (vec->len - index));
 	}
 }
-
-
 
 R_API void *r_vector_insert(RVector *vec, size_t index, void *x) {
 	if (vec->len >= vec->capacity) {

@@ -26,7 +26,7 @@ typedef struct r_list_t {
 } RList;
 
 typedef struct r_list_range_t {
-	SdbHt *h;
+	HtPP *h;
 	RList *l;
 	//RListComparator c;
 } RListRange;
@@ -41,7 +41,7 @@ typedef struct r_oflist_t {
 #endif
 
 #ifdef R_API
-//#define R_LIST_NEW(x,y) x=r_list_new();x->free=(RListFree)y
+// #define R_LIST_NEW(x,y) x = r_list_new (); x->free = (RListFree)y
 #define r_list_foreach(list, it, pos)\
 	if (list)\
 		for (it = list->head; it && (pos = it->data, 1); it = it->n)
@@ -63,7 +63,7 @@ typedef struct r_oflist_t {
 // #define r_list_empty(x) (!x || (!(x->head) && !(x->tail)))
 #define r_list_empty(x) (!(x) || !(x)->length)
 #define r_list_head(x) ((x)? (x)->head: NULL)
-#define r_list_tail(x) x->tail
+#define r_list_tail(x) ((x)? (x)->tail: NULL)
 
 #define r_list_iter_get(x)\
 	x->data;\
@@ -83,6 +83,7 @@ R_API RListIter *r_list_prepend(RList *list, void *data);
 R_API RListIter *r_list_insert(RList *list, int n, void *data);
 R_API int r_list_length(const RList *list);
 R_API void *r_list_first(const RList *list);
+R_API void *r_list_last(const RList *list);
 R_API RListIter *r_list_add_sorted(RList *list, void *data, RListComparator cmp);
 R_API void r_list_sort(RList *list, RListComparator cmp);
 R_API RList *r_list_uniq(const RList *list, RListComparator cmp);
@@ -106,7 +107,8 @@ R_API void *r_list_get_bottom(const RList *list);
 R_API void *r_list_pop(RList *list);
 R_API void *r_list_pop_head(RList *list);
 R_API void r_list_reverse(RList *list);
-R_API RList *r_list_clone(RList *list);
+R_API RList *r_list_clone(const RList *list);
+R_API char *r_list_to_str(RList *list, char ch);
 
 /* hashlike api */
 R_API RListIter *r_list_contains(const RList *list, const void *p);

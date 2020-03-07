@@ -1390,6 +1390,7 @@ static void esil_branch_check_bit_imm(xtensa_isa isa, xtensa_opcode opcode, xten
 
 	xtensa_operand_get_field (isa, opcode, 0, format, i, slot_buffer, &src_reg);
 	xtensa_operand_get_field (isa, opcode, 1, format, i, slot_buffer, &imm_bit);
+	xtensa_operand_decode (isa, opcode, 1, &imm_bit);
 	xtensa_operand_get_field (isa, opcode, 2, format, i, slot_buffer, (ut32 *) &imm_offset);
 
 	xtensa_regfile src_rf = xtensa_operand_regfile (isa, opcode, 0);
@@ -1641,6 +1642,7 @@ static void esil_set_shift_amount_imm(xtensa_isa isa, xtensa_opcode opcode,
 	ut32 sa_imm;
 
 	xtensa_operand_get_field (isa, opcode, 0, format, i, slot_buffer, &sa_imm);
+	xtensa_operand_decode (isa, opcode, 0, &sa_imm);
 
 	r_strbuf_appendf (
 		&op->esil,
@@ -1662,6 +1664,7 @@ static void esil_shift_logic_imm(xtensa_isa isa, xtensa_opcode opcode,
 	xtensa_operand_get_field (isa, opcode, 0, format, i, slot_buffer, &reg_dst);
 	xtensa_operand_get_field (isa, opcode, 1, format, i, slot_buffer, &reg_src);
 	xtensa_operand_get_field (isa, opcode, 2, format, i, slot_buffer, &imm_amount);
+	xtensa_operand_decode (isa, opcode, 2, &imm_amount);
 
 	xtensa_regfile dst_rf = xtensa_operand_regfile (isa, opcode, 0);
 	xtensa_regfile src_rf = xtensa_operand_regfile (isa, opcode, 1);
@@ -1905,7 +1908,7 @@ static void analop_esil (xtensa_isa isa, xtensa_opcode opcode, xtensa_format for
 	}
 }
 
-static int xtensa_op (RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf_original, int len_original) {
+static int xtensa_op (RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf_original, int len_original, RAnalOpMask mask) {
 	if (!op) {
 		return 1;
 	}
@@ -1918,9 +1921,6 @@ static int xtensa_op (RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf_origin
 	}
 
 	xtensa_op0_fns[(buf_original[0] & 0xf)] (anal, op, addr, buf_original);
-
-	if (anal->decode) {
-	}
 
 	ut8 buffer[XTENSA_MAX_LENGTH] = { 0 };
 	int len = R_MIN(op->size, XTENSA_MAX_LENGTH);
@@ -1969,7 +1969,7 @@ static int xtensa_op (RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf_origin
 			xtensa_check_stack_op (isa, opcode, format, i, slot_buffer, op);
 		}
 
-		if (anal->decode) {
+		if (mask & R_ANAL_OP_MASK_ESIL) {
 			analop_esil (isa, opcode, format, i, slot_buffer, op);
 		}
 	}
@@ -2030,7 +2030,7 @@ RAnalPlugin r_anal_plugin_xtensa = {
 	.get_reg_profile = get_reg_profile,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_xtensa,

@@ -3,7 +3,6 @@
 #include <r_io.h>
 #include <r_lib.h>
 #include <r_types.h>
-#include <r_print.h>
 #include <r_util.h>
 #include <sys/types.h>
 
@@ -85,6 +84,9 @@ static bool r2k__plugin_open(RIO *io, const char *pathname, bool many) {
 }
 
 static char *r2k__system(RIO *io, RIODesc *fd, const char *cmd) {
+	if (!strcmp (cmd, "")) {
+		return NULL;
+	}
 	if (!strncmp (cmd, "mod", 3)) {
 #if __WINDOWS__
 		GetSystemModules (io);
@@ -132,7 +134,8 @@ static RIODesc *r2k__open(RIO *io, const char *pathname, int rw, int mode) {
 
 RIOPlugin r_io_plugin_r2k = {
 	.name = "r2k",
-	.desc = "kernel access API io (r2k://)",
+	.desc = "Kernel access API io",
+	.uris = "r2k://",
 	.license = "LGPL3",
 	.open = r2k__open,
 	.close = r2k__close,
@@ -143,7 +146,7 @@ RIOPlugin r_io_plugin_r2k = {
 	.write = r2k__write,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_IO,
 	.data = &r_io_plugin_r2k,

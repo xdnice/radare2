@@ -204,8 +204,8 @@ R_API void r_egg_if(REgg *egg, const char *reg, char cmp, int v);
 R_API void r_egg_printf(REgg *egg, const char *fmt, ...);
 R_API int r_egg_compile(REgg *egg);
 R_API int r_egg_padding (REgg *egg, const char *pad);
-R_API int r_egg_assemble(REgg *egg);
-R_API int r_egg_assemble_asm(REgg *egg, char **asm_list);
+R_API bool r_egg_assemble(REgg *egg);
+R_API bool r_egg_assemble_asm(REgg *egg, char **asm_list);
 R_API void r_egg_pattern(REgg *egg, int size);
 R_API RBuffer *r_egg_get_bin(REgg *egg);
 //R_API int r_egg_dump (REgg *egg, const char *file) { }
@@ -214,6 +214,7 @@ R_API RBuffer *r_egg_get_bin(REgg *egg);
 R_API char *r_egg_get_assembly(REgg *egg);
 R_API void r_egg_append(REgg *egg, const char *src);
 R_API int r_egg_run(REgg *egg);
+R_API int r_egg_run_rop(REgg *egg);
 R_API int r_egg_patch(REgg *egg, int off, const ut8 *b, int l);
 R_API void r_egg_finalize(REgg *egg);
 

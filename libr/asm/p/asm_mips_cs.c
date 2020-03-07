@@ -50,8 +50,6 @@ static int disassemble(RAsm *a, RAsmOp *op, const ut8 *buf, int len) {
 		r_asm_op_set_asm (op, "invalid");
 		op->size = 4;
 		goto beach;
-	} else {
-		ret = 4;
 	}
 	if (insn->size < 1) {
 		goto beach;
@@ -99,7 +97,7 @@ RAsmPlugin r_asm_plugin_mips_cs = {
 	.assemble = &assemble
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ASM,
 	.data = &r_asm_plugin_mips_cs,

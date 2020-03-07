@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2013-2018 - pancake, dkreuter, astuder  */
+/* radare - LGPL - Copyright 2013-2019 - pancake, dkreuter, astuder  */
 
 #include <string.h>
 #include <r_types.h>
@@ -7,6 +7,7 @@
 #include <r_anal.h>
 
 #include <8051_ops.h>
+#include "../asm/arch/8051/8051_disas.c"
 
 typedef struct {
 	const char *name;
@@ -90,7 +91,7 @@ static void map_cpu_memory (RAnal *anal, int entry, ut32 addr, ut32 size, bool f
 		// allocate memory for address space
 		char *mstr = r_str_newf ("malloc://%d", size);
 		desc = anal->iob.open_at (anal->iob.io, mstr, R_PERM_RW, 0, addr);
-		r_str_free (mstr);
+		free (mstr);
 		// set 8051 address space as name of mapped memory
 		if (desc && anal->iob.fd_get_name (anal->iob.io, desc->fd)) {
 			RList *maps = anal->iob.fd_get_map (anal->iob.io, desc->fd);
@@ -99,7 +100,7 @@ static void map_cpu_memory (RAnal *anal, int entry, ut32 addr, ut32 size, bool f
 			r_list_foreach (maps, iter, current_map) {
 				char *cmdstr = r_str_newf ("omni %d %s", current_map->id, mem_map[entry].name);
 				anal->coreb.cmd (anal->coreb.core, cmdstr);
-				r_str_free (cmdstr);
+				free (cmdstr);
 			}
 			r_list_free (maps);
 		}
@@ -120,7 +121,7 @@ static void set_cpu_model(RAnal *anal, bool force) {
 		cpu = cpu_models[0].name;
 	}
 
-	// if cpu model changed, reinitalize emulation
+	// if cpu model changed, reinitialize emulation
 	if (force || !cpu_curr_model || r_str_casecmp (cpu, cpu_curr_model->name)) {
 		// find model by name
 		int i = 0;
@@ -151,9 +152,11 @@ static void set_cpu_model(RAnal *anal, bool force) {
 
 	// (Re)allocate memory as needed.
 	// We assume that code is allocated with firmware image
-	map_cpu_memory (anal, I8051_IDATA, addr_idata, 0x100, force);
-	map_cpu_memory (anal, I8051_SFR, addr_sfr, 0x80, force);
-	map_cpu_memory (anal, I8051_XDATA, addr_xdata, 0x10000, force);
+	if (anal->iob.fd_get_name && anal->coreb.cmd) {
+		map_cpu_memory (anal, I8051_IDATA, addr_idata, 0x100, force);
+		map_cpu_memory (anal, I8051_SFR, addr_sfr, 0x80, force);
+		map_cpu_memory (anal, I8051_XDATA, addr_xdata, 0x10000, force);
+	}
 }
 
 static ut8 bitindex[] = {
@@ -213,13 +216,13 @@ static RI8051Reg registers[] = {
 #define e(frag) r_strbuf_append(&op->esil, frag)
 #define ef(frag, ...) r_strbuf_appendf(&op->esil, frag, __VA_ARGS__)
 
-#define flag_c "$c7,c,=,"
-#define flag_b "$b8,c,=,"
-#define flag_ac "$c3,ac,=,"
-#define flag_ab "$b3,ac,=,"
-#define flag_ov "$c6,ov,=,"
-#define flag_ob "$b7,$b6,^,ov,=,"
-#define flag_p "0xff,a,&=,$p,!,p,=,"
+#define flag_c "7,$c,c,:=,"
+#define flag_b "8,$b,c,:=,"
+#define flag_ac "3,$c,ac,:=,"
+#define flag_ab "3,$b,ac,:=,"
+#define flag_ov "6,$c,ov,:=,"
+#define flag_ob "7,$b,6,$b,^,ov,:=,"
+#define flag_p "0xff,a,&=,$p,!,p,:=,"
 
 #define ev_a 0
 #define ev_bit bitindex[buf[1]>>3]
@@ -516,7 +519,7 @@ static void analop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf) {
 		break;
 	template_alu4 (0x20, "+", flag_c flag_ac flag_ov flag_p) /* 0x24..0x2f add a,.. */
 	case 0x33: /* rlc a */
-		e ("c,1,&,a,a,+=,$c7,c,=,a,+=," flag_p);
+		e ("c,1,&,a,a,+=,7,$c,c,:=,a,+=," flag_p);
 		break;
 	template_alu4_c (0x30, "+", flag_c flag_ac flag_ov flag_p) /* 0x34..0x3f addc a,.. */
 	template_alu2 (0x40, "|") /* 0x42..0x43 orl direct,.. */
@@ -552,7 +555,7 @@ static void analop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf) {
 		break;
 	case 0x84: /* div ab */
 		// note: escape % if this becomes a format string
-		e ("b,0,==,$z,ov,=,b,a,%,b,a,/=,b,=,0,c,=," flag_p);
+		e ("b,0,==,$z,ov,:=,b,a,%,b,a,/=,b,=,0,c,=," flag_p);
 		break;
 	case 0x85: /* mov direct, direct */
 		xr (dir1); xw (dir2);
@@ -584,7 +587,7 @@ static void analop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf) {
 		xi (dp, "++");
 		break;
 	case 0xA4: /* mul ab */
-		e ("8,a,b,*,DUP,a,=,>>,DUP,b,=,0,==,$z,!,ov,=,0,c,=," flag_p);
+		e ("8,a,b,*,DUP,a,=,>>,DUP,b,=,0,==,$z,!,ov,:=,0,c,=," flag_p);
 		break;
 	case 0xA5: /* "reserved" */
 		e ("0,trap");
@@ -606,17 +609,17 @@ static void analop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf) {
 		e ("1,"); xi (c, "^");
 		break;
 	case 0xB4: /* cjne a, imm, offset */
-		xr (imm1); xr (a); e ("-," flag_b); cjmp;
+		xr (imm1); xr (a); e ("==,$z,!," flag_b); cjmp;
 		break;
 	case 0xB5: /* cjne a, direct, offset */
-		xr (dir1); xr (a); e ("-," flag_b); cjmp;
+		xr (dir1); xr (a); e ("==,$z,!," flag_b); cjmp;
 		break;
 	case 0xB6: case 0xB7: /* cjne @ri, imm, offset */
-		xr (imm1); xr (ri); e ("-," flag_b); cjmp;
+		xr (imm1); xr (ri); e ("==,$z,!," flag_b); cjmp;
 		break;
 	case 0xB8: case 0xB9: case 0xBA: case 0xBB:
 	case 0xBC: case 0xBD: case 0xBE: case 0xBF: /* cjne Rn, imm, offset */
-		xr (imm1); xr (rn); e ("-," flag_b); cjmp;
+		xr (imm1); xr (rn); e ("==,$z,!," flag_b); cjmp;
 		break;
 	case 0xC0: /* push direct */
 		xr (dir1); xw (sp1);
@@ -654,7 +657,7 @@ static void analop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf) {
 		// if (lower nibble > 9) or (AC == 1) add 6
 		// if (higher nibble > 9) or (C == 1) add 0x60
 		// carry |= carry caused by this operation
-		e ("a,0x0f,&,9,==,$b4,ac,|,?{,6,a,+=,$c7,c,|=,},a,0xf0,&,0x90,==,$b8,c,|,?{,0x60,a,+=,$c7,c,|=,}," flag_p);
+		e ("a,0x0f,&,9,==,4,$b,ac,|,?{,6,a,+=,7,$c,c,|,c,:=,},a,0xf0,&,0x90,==,8,$b,c,|,?{,0x60,a,+=,7,$c,c,|,c,:=,}," flag_p);
 		break;
 	case 0xD5: /* djnz direct, offset */
 		xi (dir1, "--"); xr (dir1); e ("0,==,$z,!,"); cjmp;
@@ -875,114 +878,108 @@ static ut32 map_direct_addr(RAnal *anal, ut8 addr) {
 	}
 }
 
-static int i8051_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
+static int i8051_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len, RAnalOpMask mask) {
 	set_cpu_model (anal, false);
-
-	op->delay = 0;
 
 	int i = 0;
 	while (_8051_ops[i].string && _8051_ops[i].op != (buf[0] & ~_8051_ops[i].mask))	{
 		i++;
 	}
 
-	op->size = _8051_ops[i].len;
 	op->jump = op->fail = -1;
 	op->ptr = op->val = -1;
 
 	ut8 arg1 = _8051_ops[i].arg1;
 	ut8 arg2 = _8051_ops[i].arg2;
 
+	op->delay = 0;
+	op->cycles = _8051_ops[i].cycles;
+	op->failcycles = _8051_ops[i].cycles;
+	op->nopcode = 1;
+	op->size = _8051_ops[i].len;
+	op->type = _8051_ops[i].type;
+	op->family = R_ANAL_OP_FAMILY_CPU; // maybe also FAMILY_IO...
+	op->id = i;
+
+	switch (_8051_ops[i].instr) {
+	default:
+		op->cond = R_ANAL_COND_AL;
+	break;
+	case OP_CJNE:
+	case OP_DJNZ:
+	case OP_JB:
+	case OP_JBC:
+	case OP_JNZ:
+		op->cond = R_ANAL_COND_NE;
+	break;
+	case OP_JNB:
+	case OP_JZ:
+		op->cond = R_ANAL_COND_EQ;
+	break; case OP_JC:
+		op->cond = R_ANAL_COND_HS;
+	break; case OP_JNC:
+		op->cond = R_ANAL_COND_LO;
+	}
+
+	switch (_8051_ops[i].instr) {
+	default:
+		op->eob = false;
+	break;
+	case OP_CJNE:
+	case OP_DJNZ:
+	case OP_JB:
+	case OP_JBC:
+	case OP_JC:
+	case OP_JMP:
+	case OP_JNB:
+	case OP_JNC:
+	case OP_JNZ:
+	case OP_JZ:
+		op->eob = true;
+	}
+
+	// TODO: op->datatype
+
 	switch (arg1) {
-	case A_DIRECT:
+	default:
+	break; case A_DIRECT:
 		op->ptr = map_direct_addr (anal, buf[1]);
-		break;
-	case A_BIT:
+	break; case A_BIT:
 		op->ptr = map_direct_addr (anal, arg_bit (buf[1]));
-		break;
-	case A_IMMEDIATE:
+	break; case A_IMMEDIATE:
 		op->val = buf[1];
-		break;
-	case A_IMM16:
+	break; case A_IMM16:
 		op->val = buf[1] * 256 + buf[2];
 		op->ptr = op->val + i8051_reg_read (anal->reg, "_xdata"); // best guess, it's a XRAM pointer
-		break;
-	default:
-		break;
 	}
 
 	switch (arg2) {
-	case A_DIRECT:
+	default:
+	break; case A_DIRECT:
 		if (arg1 == A_RI || arg1 == A_RN) {
 			op->ptr = map_direct_addr (anal, buf[1]);
 		} else if (arg1 != A_DIRECT) {
 			op->ptr = map_direct_addr (anal, buf[2]);
 		}
-		break;
-	case A_BIT:
+	break; case A_BIT:
 		op->ptr = arg_bit ((arg1 == A_RI || arg1 == A_RN) ? buf[1] : buf[2]);
 		op->ptr = map_direct_addr (anal, op->ptr);
-		break;
-	case A_IMMEDIATE:
+	break; case A_IMMEDIATE:
 		op->val = (arg1 == A_RI || arg1 == A_RN) ? buf[1] : buf[2];
-		break;
-	default:
-		break;
 	}
 
 	switch(_8051_ops[i].instr) {
-	case OP_PUSH:
-		op->type = R_ANAL_OP_TYPE_PUSH;
+	default:
+	break; case OP_PUSH:
 		op->stackop = R_ANAL_STACK_INC;
 		op->stackptr = 1;
-		break;
-	case OP_POP:
-		op->type = R_ANAL_OP_TYPE_POP;
+	break; case OP_POP:
 		op->stackop = R_ANAL_STACK_INC;
 		op->stackptr = -1;
-		break;
-	case OP_RET:
-		op->type = R_ANAL_OP_TYPE_RET;
+	break; case OP_RET:
 		op->stackop = R_ANAL_STACK_INC;
 		op->stackptr = -2;
-		break;
-	case OP_NOP:
-		op->type = R_ANAL_OP_TYPE_NOP;
-		break;
-	case OP_INC:
-	case OP_ADD:
-	case OP_ADDC:
-		op->type = R_ANAL_OP_TYPE_ADD;
-		break;
-	case OP_DEC:
-	case OP_SUBB:
-		op->type = R_ANAL_OP_TYPE_SUB;
-		break;
-	case OP_ANL:
-		op->type = R_ANAL_OP_TYPE_AND;
-		break;
-	case OP_ORL:
-		op->type = R_ANAL_OP_TYPE_OR;
-		break;
-	case OP_XRL:
-		op->type = R_ANAL_OP_TYPE_XOR;
-		break;
-	case OP_CPL:
-		op->type = R_ANAL_OP_TYPE_CPL;
-		break;
-	case OP_XCH:
-		op->type = R_ANAL_OP_TYPE_XCHG;
-		break;
-	case OP_MOV:
-		op->type = R_ANAL_OP_TYPE_MOV;
-		break;
-	case OP_MUL:
-		op->type = R_ANAL_OP_TYPE_MUL;
-		break;
-	case OP_DIV:
-		op->type = R_ANAL_OP_TYPE_DIV;
-		break;
-	case OP_CALL:
-		op->type = R_ANAL_OP_TYPE_CALL;
+	break; case OP_CALL:
 		op->stackop = R_ANAL_STACK_INC;
 		op->stackptr = 2;
 		if (arg1 == A_ADDR11) {
@@ -992,9 +989,7 @@ static int i8051_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len
 			op->jump = 0x100 * buf[1] + buf[2];
 			op->fail = addr + op->size;
 		}
-		break;
-	case OP_JMP:
-		op->type = R_ANAL_OP_TYPE_JMP;
+	break; case OP_JMP:
 		if (arg1 == A_ADDR11) {
 			op->jump = arg_addr11 (addr + op->size, buf);
 			op->fail = addr + op->size;
@@ -1005,7 +1000,7 @@ static int i8051_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len
 			op->jump = arg_offset (addr + op->size, buf[1]);
 			op->fail = addr + op->size;
 		}
-		break;
+	break;
 	case OP_CJNE:
 	case OP_DJNZ:
 	case OP_JC:
@@ -1015,30 +1010,26 @@ static int i8051_op(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len
 	case OP_JB:
 	case OP_JBC:
 	case OP_JNB:
-		op->type = R_ANAL_OP_TYPE_CJMP;
-		if (op->size == 2) {
-			op->jump = arg_offset (addr + 2, buf[1]);
-		} else if (op->size == 3) {
-			op->jump = arg_offset (addr + 3, buf[2]);
-		}
+		op->jump = arg_offset (addr + op->size, buf[op->size - 1]);
 		op->fail = addr + op->size;
-		break;
-	case OP_INVALID:
-		op->type = R_ANAL_OP_TYPE_ILL;
-		break;
-	default:
-		op->type = R_ANAL_OP_TYPE_UNK;
-		break;
 	}
 
 	if (op->ptr != -1 && op->refptr == 0) {
 		op->refptr = 1;
 	}
 
-	if (anal->decode) {
+	if (mask & R_ANAL_OP_MASK_ESIL) {
 		ut8 copy[3] = {0, 0, 0};
 		memcpy (copy, buf, len >= 3 ? 3 : len);
 		analop_esil (anal, op, addr, copy);
+	}
+
+	int olen = 0;
+	op->mnemonic = r_8051_disas (addr, buf, len, &olen);
+	op->size = olen;
+
+	if (mask & R_ANAL_OP_MASK_HINT) {
+		// TODO: op->hint
 	}
 
 	return op->size;
@@ -1057,7 +1048,7 @@ RAnalPlugin r_anal_plugin_8051 = {
 	.esil_fini = esil_i8051_fini
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_8051,

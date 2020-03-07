@@ -81,7 +81,7 @@ int handle_qC(libgdbr_t *g) {
 		return -1;
 	}
 	g->data[g->data_len] = '\0';
-	if (read_thread_id (g->data + 2, &g->pid, &g->tid, g->stub_features.multiprocess) , 0) {
+	if (read_thread_id (g->data + 2, &g->pid, &g->tid, g->stub_features.multiprocess) < 0) {
 		send_ack (g);
 		return -1;
 	}
@@ -256,7 +256,10 @@ int handle_stop_reason(libgdbr_t *g) {
 		if (send_ack (g) < 0) {
 			return -1;
 		}
-		return handle_stop_reason (g); // Wait for next stop message
+		memset (&g->stop_reason, 0, sizeof (libgdbr_stop_reason_t));
+		g->stop_reason.signum = -1;
+		g->stop_reason.reason = R_DEBUG_REASON_NONE;
+		return 0;
 	case 'W':
 		return stop_reason_exit (g);
 	case 'X':

@@ -59,7 +59,7 @@ static int unget_saved_buffer[TOK_MAX_SIZE + 1];
 static int unget_buffer_enabled;
 static TokenSym *hash_ident[TOK_HASH_SIZE];
 static char token_buf[STRING_MAX_SIZE + 1];
-/* true if isid(c) || isnum(c) */
+/* true if isid(c) || isnum(c) || isdot(c) */
 static unsigned char isidnum_table[256 - CH_EOF];
 
 static const char tcc_keywords[] =
@@ -211,7 +211,6 @@ static TokenSym *tok_alloc_new(TokenSym **pts, const char *str, int len)
 		ptable = realloc (table_ident, (i + TOK_ALLOC_INCR) * sizeof(TokenSym *));
 		table_ident = ptable;
 	}
-
 	ts = malloc (sizeof(TokenSym) + len);
 	table_ident[i] = ts;
 	ts->tok = tok_ident++;
@@ -361,7 +360,7 @@ addv:
 			return table_ident[v - TOK_IDENT]->str;
 		} else if (v >= SYM_FIRST_ANOM) {
 			/* special name for anonymous symbol */
-			sprintf (p, "L.%u", v - SYM_FIRST_ANOM);
+			sprintf (p, "%u", v - SYM_FIRST_ANOM);
 		} else {
 			/* should never happen */
 			return NULL;
@@ -1601,8 +1600,10 @@ include_trynext:
 			memcpy (filepath, file->filename, filepath_len);
 			strcpy (filepath + filepath_len, buf);
 			if (tcc_open (s1, filepath) < 0) {
-				int len = snprintf (filepath, sizeof (filepath),
-					"/usr/include/%s", buf);
+				if (!dirname) {
+					dirname = "/usr/include";
+				}
+				int len = snprintf (filepath, sizeof (filepath), "%s/%s", dirname, buf);
 				if (len >= sizeof (filepath) || tcc_open (s1, filepath) < 0) {
 					tcc_error ("include file '%s' not found", filepath);
 				} else {
@@ -2352,7 +2353,7 @@ maybe_newline:
 	case 'Q': case 'R': case 'S': case 'T':
 	case 'U': case 'V': case 'W': case 'X':
 	case 'Y': case 'Z':
-	case '_':
+	case '_': case '.':
 parse_ident_fast:
 		p1 = p;
 		h = TOK_HASH_INIT;
@@ -2360,10 +2361,21 @@ parse_ident_fast:
 		p++;
 		for (;;) {
 			c = *p;
-			if (!isidnum_table[c - CH_EOF]) {
+			if (!isidnum_table[*p - CH_EOF]) {
 				break;
 			}
-			h = TOK_HASH_FUNC (h, c);
+			// dot handling here too
+			if (isdot (c)) {
+				PEEKC (c, p);
+				if (isnum (c)) {
+					cstr_reset (&tokcstr);
+					cstr_ccat (&tokcstr, '.');
+					goto parse_num;
+				} else if (isdot (c)) {
+					goto parse_dots;
+				}
+			}
+			h = TOK_HASH_FUNC (h, *p);
 			p++;
 		}
 		if (c != '\\') {
@@ -2436,7 +2448,7 @@ parse_num:
 			t = c;
 			cstr_ccat (&tokcstr, c);
 			PEEKC (c, p);
-			if (!(isnum (c) || isid (c) || c == '.' ||
+			if (!(isnum (c) || isid (c) || isdot (c) ||
 			      ((c == '+' || c == '-') &&
 			       (t == 'e' || t == 'E' || t == 'p' || t == 'P')))) {
 				break;
@@ -2447,24 +2459,14 @@ parse_num:
 		tokc.cstr = &tokcstr;
 		tok = TOK_PPNUM;
 		break;
-	case '.':
 		/* special dot handling because it can also start a number */
-		PEEKC (c, p);
-		if (isnum (c)) {
-			cstr_reset (&tokcstr);
-			cstr_ccat (&tokcstr, '.');
-			goto parse_num;
-		} else if (c == '.') {
-			PEEKC (c, p);
-			if (c != '.') {
-				expect ("'.'");
-				return;
-			}
-			PEEKC (c, p);
-			tok = TOK_DOTS;
-		} else {
-			tok = '.';
+parse_dots:
+		if (!isdot (c)) {
+			expect ("'.'");
+			return;
 		}
+		PEEKC (c, p);
+		tok = TOK_DOTS;
 		break;
 	case '\'':
 	case '\"':
@@ -2914,7 +2916,7 @@ redo:
 				/* NOTE: non zero sa->t indicates VA_ARGS */
 				while ((parlevel > 0 ||
 					(tok != ')' &&
-					 (tok != ',' || sa->type.t))) &&
+					 (tok != ',' || (sa && sa->type.t)))) &&
 				       tok != -1) {
 					if (tok == '(') {
 						parlevel++;
@@ -2931,7 +2933,7 @@ redo:
 				}
 				str.len -= spc;
 				tok_str_add (&str, 0);
-				sa1 = sym_push2 (&args, sa->v & ~SYM_FIELD, sa->type.t, 0);
+				sa1 = sa ? sym_push2 (&args, sa->v & ~SYM_FIELD, sa->type.t, 0) : NULL;
 				if (!sa1) {
 					return -1;
 				}
@@ -3255,7 +3257,7 @@ ST_FUNC void preprocess_new(void)
 
 	/* init isid table */
 	for (i = CH_EOF; i < 256; i++) {
-		isidnum_table[i - CH_EOF] = isid (i) || isnum (i);
+		isidnum_table[i - CH_EOF] = isid (i) || isnum (i) || isdot (i);
 	}
 
 	/* add all tokens */

@@ -68,7 +68,7 @@ R_API void r_vector_free(RVector *vec);
 // the returned vector will have the same capacity as vec.
 R_API RVector *r_vector_clone(RVector *vec);
 
-static inline bool r_vector_empty(RVector *vec) {
+static inline bool r_vector_empty(const RVector *vec) {
 	return vec->len == 0;
 }
 
@@ -125,6 +125,10 @@ R_API void *r_vector_shrink(RVector *vec);
 	if ((vec) && (vec)->a) \
 		for (it = (void *)(vec)->a; (char *)it != (char *)(vec)->a + ((vec)->len * (vec)->elem_size); it = (void *)((char *)it + (vec)->elem_size))
 
+#define r_vector_enumerate(vec, it, i) \
+	if ((vec) && (vec)->a) \
+		for (it = (void *)(vec)->a, i = 0; i < (vec)->len; it = (void *)((char *)it + (vec)->elem_size), i++)
+
 
 // RPVector
 
@@ -152,6 +156,16 @@ static inline void r_pvector_set(RPVector *vec, size_t index, void *e) {
 
 static inline bool r_pvector_empty(RPVector *vec) {
 	return r_pvector_len (vec) == 0;
+}
+
+// returns a pointer to the offset inside the array where the element of the index lies.
+static inline void **r_pvector_index_ptr(RPVector *vec, size_t index) {
+	return ((void **)vec->v.a) + index;
+}
+
+// same as r_pvector_index_ptr(<vec>, 0)
+static inline void **r_pvector_data(RPVector *vec) {
+	return (void **)vec->v.a;
 }
 
 // returns the respective pointer inside the vector if x is found or NULL otherwise.

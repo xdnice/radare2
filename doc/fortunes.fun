@@ -202,7 +202,7 @@ Quantum dissasemble: it's there as long as you don't observe it
 Ceci n'est pas une r2pipe
 Buy a mac
 (gdb) ^D
-((fn [f s n] (cat [(f f s n) "dare2"])) (fn [f s n] (pr s) (if (> n 0) (f f (cat [s "ra"]) (dec n)) s)) "" Infty)
+((fn [f s n] (str (f f s n) "dare2")) (fn [f s n] (pr s) (if (> n 0) (f f (str s "ra") (dec n)) s)) "" (/ 1.0 0))
 There's no way you could crash radare2. No. Way.
 When in doubt, try 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; pd;'
 .-. .- -.. .- .-. . ..---
@@ -264,3 +264,30 @@ Any commercial use or duplication of this copylefted material without prior lice
 Violators will be prosecuted.
 This shell has been seized by the Internet's Police.
 OpenBSD might pledge r2 but r2 unveils OpenBSD.
+Error: There's a missing space before the opening parenthesis '('
+WARNING: r_list_length: assertion 'list' failed (line 55)
+This accessory is not supported by this version of radare2.
+When can we have an official anime mascot for radare2?
+Iaito became Cutter the same way Iai-giri became Cut.
+Sorry, radare2 has experienced an internal error.
+Segmentation fault (core dumped)
+Use rabin2 to discover the real TRUTH
+==1337== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+**** COMMODORE 64 RADARE V2 ****  64K RAM SYSTEM  38911 DISASM BYTES FREE  READY.
+Most likely your core dump fell into a blackhole, can't see it.
+Long time no C
+radare2 is power, France is pancake.
+Come to C me!
+Unable to locate package gdb
+You C it, you fix it!
+How good is your C?
+I C dead bugs everywhere!
+You will soon have an out of memory experience.
+This binary no good. Try another.
+BSOD!
+Mind the trap.
+For a full documentation see `r2 -qc iz /lib/libr_core.so`
+99 bugs, take one down pass it around. 100 bugs...
+I like my binary stripped.
+Now 8-bit clean with better ＡＳＣＩＩ!
+Please insert disc 2 and press any key to continue...

@@ -1,9 +1,10 @@
-/* MIT (C) pancake (at) nopcode (dot) org - 2009-2017 */
+/* MIT (C) pancake (at) nopcode (dot) org - 2009-2019 */
 
 #include "spp.h"
+#include "r_api.h"
 #include "config.h"
 
-R_API int spp_run(char *buf, Output *out) {
+S_API int spp_run(char *buf, Output *out) {
 	int i, ret = 0;
 	char *tok;
 
@@ -39,7 +40,6 @@ R_API int spp_run(char *buf, Output *out) {
 				break;
 			}
 			if (ret) {
-
 				if (proc->state.ifl < 0 || proc->state.ifl >= MAXIFL) {
 					fprintf (stderr, "Nested conditionals parsing error.\n");
 					break;
@@ -67,25 +67,17 @@ static char *spp_run_str(char *buf, int *rv) {
 
 void lbuf_strcat(SppBuf *dst, char *src) {
 	int len = strlen (src);
+	char *nbuf;
 	if (!dst->lbuf || (len + dst->lbuf_n) > dst->lbuf_s) {
-		dst->lbuf = realloc (dst->lbuf, dst->lbuf_s << 1);
+		nbuf = realloc (dst->lbuf, dst->lbuf_s << 1);
+		if (!nbuf) {
+			fprintf (stderr, "Out of memory.\n");
+			return;
+		}
+		dst->lbuf = nbuf;
 	}
 	memcpy (dst->lbuf + dst->lbuf_n, src, len + 1);
 	dst->lbuf_n += len;
-}
-
-void do_printf(Output *out, char *str, ...) {
-	va_list ap;
-	va_start (ap, str);
-	if (out->fout) {
-		vfprintf (out->fout, str, ap);
-	} else {
-		char tmp[4096];
-		vsnprintf (tmp, sizeof (tmp), str, ap);
-		tmp[sizeof (tmp) - 1] = 0;
-		r_strbuf_append (out->cout, tmp);
-	}
-	va_end (ap);
 }
 
 int do_fputs(Output *out, char *str) {
@@ -109,7 +101,7 @@ int do_fputs(Output *out, char *str) {
 	return printed;
 }
 
-R_API void spp_eval(char *buf, Output *out) {
+S_API void spp_eval(char *buf, Output *out) {
 	char *ptr, *ptr2;
 	char *ptrr = NULL;
 	int delta;
@@ -228,7 +220,7 @@ retry:
 }
 
 /* TODO: detect nesting */
-R_API void spp_io(FILE *in, Output *out) {
+S_API void spp_io(FILE *in, Output *out) {
 	char buf[4096];
 	int lines;
 	if (!proc->buf.lbuf) {
@@ -242,12 +234,15 @@ R_API void spp_io(FILE *in, Output *out) {
 	proc->buf.lbuf_s = 1024;
 	while (!feof (in)) {
 		buf[0] = '\0'; // ???
-		fgets (buf, 1023, in);
+		if (!fgets (buf, sizeof (buf) - 1, in)) {
+			break;
+		}
 		if (feof (in)) break;
 		lines = 1;
 		if (!memcmp (buf, "#!", 2)) {
-			fgets (buf, 1023, in);
-			if (feof (in)) break;
+			if (!fgets (buf, sizeof (buf) - 1, in) || feof (in)) {
+				break;
+			}
 			lines++;
 		}
 		if (proc->multiline) {
@@ -255,7 +250,9 @@ R_API void spp_io(FILE *in, Output *out) {
 				char *eol = buf + strlen (buf) - strlen (proc->multiline);
 				if (!strcmp (eol, proc->multiline)) {
 					D fprintf (stderr, "Multiline detected!\n");
-					fgets (eol, 1023, in);
+					if (!fgets (eol, 1023, in)) {
+						break;
+					}
 					if (feof (in)) {
 						break;
 					}
@@ -271,7 +268,7 @@ R_API void spp_io(FILE *in, Output *out) {
 	(void)do_fputs (out, proc->buf.lbuf);
 }
 
-R_API int spp_file(const char *file, Output *out) {
+S_API int spp_file(const char *file, Output *out) {
 	FILE *in = fopen (file, "r");
 	D fprintf (stderr, "SPP-FILE(%s)\n", file);
 	if (in) {
@@ -283,21 +280,21 @@ R_API int spp_file(const char *file, Output *out) {
 	return 0;
 }
 
-R_API void spp_proc_list_kw() {
+S_API void spp_proc_list_kw() {
 	int i;
 	for (i = 0; tags[i].name; i++) {
 		printf ("%s\n", tags[i].name);
 	}
 }
 
-R_API void spp_proc_list() {
+S_API void spp_proc_list() {
 	int i;
 	for (i=0; procs[i]; i++) {
 		printf ("%s\n", procs[i]->name);
 	}
 }
 
-R_API void spp_proc_set(struct Proc *p, char *arg, int fail) {
+S_API void spp_proc_set(struct Proc *p, char *arg, int fail) {
 	int i, j;
 	if (arg)
 	for (j = 0; procs[j]; j++) {
@@ -323,4 +320,18 @@ R_API void spp_proc_set(struct Proc *p, char *arg, int fail) {
 		//args = (struct Arg*)proc->args;
 		tags = (struct Tag*)proc->tags;
 	}
+}
+
+void out_printf(Output *out, char *str, ...) {
+	va_list ap;
+	va_start (ap, str);
+	if (out->fout) {
+		vfprintf (out->fout, str, ap);
+	} else {
+		char tmp[4096];
+		vsnprintf (tmp, sizeof (tmp), str, ap);
+		tmp[sizeof (tmp) - 1] = 0;
+		r_strbuf_append (out->cout, tmp);
+	}
+	va_end (ap);
 }

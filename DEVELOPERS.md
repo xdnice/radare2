@@ -11,8 +11,8 @@ Doxyfile and generate HTML documentation into
 
 If you're contributing code or willing to update existing code, you can use the
 doxygen C-style comments to improve documentation and comments in code.
-See the [Doxygen Manual](https://www.stack.nl/~dimitri/doxygen/manual/index.html)
-for more info. Example usage can be found [here](https://www.stack.nl/~dimitri/doxygen/manual/docblocks.html)
+See the [Doxygen Manual](http://www.doxygen.nl/manual/index.html)
+for more info. Example usage can be found [here](http://www.doxygen.nl/manual/docblocks.html)
 ```c
 /**
  * \brief Find the min and max addresses in an RList of maps.
@@ -160,9 +160,24 @@ a = (b << 3) * 5;
  }
 ```
 
+* Structure in the C files
+
+The structure of the C files in r2 must be like this:
+
+```c
+/* Copyright ... */        ## copyright
+#include <r_core.h>        ## includes
+static int globals         ## const, define, global variables
+static void helper() {}    ## static functions
+R_IPI void internal() {}   ## internal apis (used only inside the library)
+R_API void public() {}     ## public apis starting with constructor/destructor
+
+```
+
+
 * Why return int vs enum
 
-The reason why many places in r2land functions return int instead of an enum type is because enums cant be OR'ed; otherwise, it breaks the usage within a switch statement and swig can't handle that stuff.
+The reason why many places in r2land functions return int instead of an enum type is because enums can't be OR'ed; otherwise, it breaks the usage within a switch statement and swig can't handle that stuff.
 
 ```
 r_core_wrap.cxx:28612:60: error: assigning to 'RRegisterType' from incompatible type 'long'
@@ -176,7 +191,9 @@ r_core_wrap.cxx:32103:61: error: assigning to 'RDebugReasonType' from incompatib
 
 * Do not leave trailing whitespaces at the end of line
 
-* Do not use asserts
+* Do not use assert.h, use r_util/r_assert.h instead.
+
+* You can use `export R_DEBUG_ASSERT=1` to set a breakpoint when hitting an assert.
 
 * Do not use C99 variable declaration
     - This way we reduce the number of local variables per function
@@ -221,7 +238,7 @@ r_core_wrap.cxx:32103:61: error: assigning to 'RDebugReasonType' from incompatib
 
 * Do not use bashisms `[[`, `$'...'` etc.
 
-* Use our [shellcheck.sh](https://github.com/radare/radare2/blob/master/sys/shellcheck.sh) script to check for problems and for bashisms
+* Use our [shellcheck.sh](https://github.com/radareorg/radare2/blob/master/sys/shellcheck.sh) script to check for problems and for bashisms
 
 # Manage Endianness
 
@@ -425,7 +442,7 @@ in the code for various reasons.
 The source of the radare2 regression test suite can be found in the
 following github repository.
 ```sh
-   git clone git://github.com/radare/radare2-regressions
+   git clone git://github.com/radareorg/radare2-regressions
 ```
 
 See the `README.md` file in that repository for further information.
@@ -440,7 +457,7 @@ don't know how to do something which is supposed to be covered
 by this framework.
 
 You should report it into the github issues page.
-   https://github.com/radare/radare2/issues
+   https://github.com/radareorg/radare2/issues
 
 Otherwise, if you are looking for some more feedback, I will
 encourage you to send an email to any of the emails enumerated
@@ -453,16 +470,6 @@ The issues page of Github contains a list of all the bugs that
 have been reported classified with labels by difficulty, type,
 milestone, etc. It is a good place to start if you are looking
 to contribute.
-
-## Contributing with patches
-
-All the development happens in the git repository. It is
-good that all patches can be applied against the `git HEAD`.
-
-I can get patches in unidiff format like this:
-```sh
-   git diff > p
-```
 
 ## HOW TO RELEASE
 

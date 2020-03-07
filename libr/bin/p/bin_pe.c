@@ -1,27 +1,28 @@
-/* radare - LGPL - Copyright 2009-2018 - nibble, pancake, alvarofe */
+/* radare - LGPL - Copyright 2009-2019 - nibble, pancake, alvarofe */
+
 #include "bin_pe.inc"
 
-static bool check_bytes(const ut8 *buf, ut64 length) {
-	unsigned int idx;
-	if (!buf) {
-		return false;
-	}
+static bool check_buffer(RBuffer *b) {
+	ut64 length = r_buf_size (b);
 	if (length <= 0x3d) {
 		return false;
 	}
-	idx = (buf[0x3c] | (buf[0x3d]<<8));
-	if (length > idx + 0x18 + 2) {
+	ut16 idx = r_buf_read_le16_at (b, 0x3c);
+	if (idx + 26 < length) {
 		/* Here PE signature for usual PE files
 		 * and PL signature for Phar Lap TNT DOS extender 32bit executables
 		 */
+		ut8 buf[2];
+		r_buf_read_at (b, 0, buf, sizeof (buf));
 		if (!memcmp (buf, "MZ", 2)) {
-			if (!memcmp (buf+idx, "PE", 2) &&
-				!memcmp (buf + idx + 0x18, "\x0b\x01", 2)) {
+			r_buf_read_at (b, idx, buf, sizeof (buf));
+			// TODO: Add one more indicator, to prevent false positives
+			if (!memcmp (buf, "PL", 2)) {
 				return true;
 			}
-			// TODO: Add one more indicator, to prevent false positives
-			if (!memcmp (buf+idx, "PL", 2)) {
-				return true;
+			if (!memcmp (buf, "PE", 2)) {
+				r_buf_read_at (b, idx + 0x18, buf, sizeof (buf));
+				return !memcmp (buf, "\x0b\x01", 2);
 			}
 		}
 	}
@@ -29,7 +30,7 @@ static bool check_bytes(const ut8 *buf, ut64 length) {
 }
 
 /* inspired in http://www.phreedom.org/solar/code/tinype/tiny.97/tiny.asm */
-static RBuffer* create(RBin* bin, const ut8 *code, int codelen, const ut8 *data, int datalen) {
+static RBuffer* create(RBin* bin, const ut8 *code, int codelen, const ut8 *data, int datalen, RBinArchOptions *opt) {
 	ut32 hdrsize, p_start, p_opthdr, p_sections, p_lsrlc, n;
 	ut32 baddr = 0x400000;
 	RBuffer *buf = r_buf_new ();
@@ -39,7 +40,7 @@ static RBuffer* create(RBin* bin, const ut8 *code, int codelen, const ut8 *data,
 #define D(x) r_buf_append_ut32(buf,x)
 #define Z(x) r_buf_append_nbytes(buf,x)
 #define W(x,y,z) r_buf_write_at(buf,x,(const ut8*)(y),z)
-#define WZ(x,y) p_tmp=buf->length;Z(x);W(p_tmp,y,strlen(y))
+#define WZ(x,y) p_tmp=r_buf_size (buf);Z(x);W(p_tmp,y,strlen(y))
 
 	B ("MZ\x00\x00", 4); // MZ Header
 	B ("PE\x00\x00", 4); // PE Signature
@@ -48,17 +49,17 @@ static RBuffer* create(RBin* bin, const ut8 *code, int codelen, const ut8 *data,
 	D (0); // Timestamp (Unused)
 	D (0); // PointerToSymbolTable (Unused)
 	D (0); // NumberOfSymbols (Unused)
-	p_lsrlc = buf->length;
+	p_lsrlc = r_buf_size (buf);
 	H (-1); // SizeOfOptionalHeader
 	H (0x103); // Characteristics
 
 	/* Optional Header */
-	p_opthdr = buf->length;
+	p_opthdr = r_buf_size (buf);
 	H (0x10b); // Magic
 	B ("\x08\x00", 2); // (Major/Minor)LinkerVersion (Unused)
 
-	p_sections = buf->length;
-	n = p_sections-p_opthdr;
+	p_sections = r_buf_size (buf);
+	n = p_sections - p_opthdr;
 	W (p_lsrlc, &n, 2); // Fix SizeOfOptionalHeader
 
 	/* Sections */
@@ -108,27 +109,36 @@ static char *signature (RBinFile *bf, bool json) {
 	}
 	struct PE_ (r_bin_pe_obj_t) * bin = bf->o->bin_obj;
 	if (json) {
-		RJSVar *json = r_pkcs7_cms_json (bin->cms);
-		char *c = r_json_stringify (json, false);
-		r_json_var_free (json);
-		return c;
+		PJ *pj = r_pkcs7_cms_json (bin->cms);
+		if (pj) {
+			return pj_drain (pj);
+		}
+		return strdup ("{}");
 	}
 	return r_pkcs7_cms_to_string (bin->cms);
 }
 
 static RList *fields(RBinFile *bf) {
-	const ut8 *buf = bf ? r_buf_buffer (bf->buf) : NULL;
 	RList *ret  = r_list_new ();
-
-	if (!buf || !ret) {
+	if (!ret) {
 		return NULL;
 	}
 
 	#define ROWL(nam,siz,val,fmt) \
-	r_list_append (ret, r_bin_field_new (addr, addr, siz, nam, sdb_fmt ("0x%08x", val), fmt));
-	ut64 addr = 128;
+	r_list_append (ret, r_bin_field_new (addr, addr, siz, nam, sdb_fmt ("0x%08x", val), fmt, false));
 
 	struct PE_(r_bin_pe_obj_t) * bin = bf->o->bin_obj;
+	ut64 addr = bin->rich_header_offset ? bin->rich_header_offset : 128;
+
+	RListIter *it;
+	Pe_image_rich_entry *rich;
+	r_list_foreach (bin->rich_entries, it, rich) {
+		r_list_append (ret, r_bin_field_new (addr, addr, 0, "RICH_ENTRY_NAME", strdup (rich->productName), "s", false));
+		ROWL ("RICH_ENTRY_ID", 2, rich->productId, "x"); addr += 2;
+		ROWL ("RICH_ENTRY_VERSION", 2, rich->minVersion, "x"); addr += 2;
+		ROWL ("RICH_ENTRY_TIMES", 4, rich->timesUsed, "x"); addr += 4;
+	}
+
 	ROWL ("Signature", 4, bin->nt_headers->Signature, "x"); addr += 4;
 	ROWL ("Machine", 2, bin->nt_headers->file_header.Machine, "x"); addr += 2;
 	ROWL ("NumberOfSections", 2, bin->nt_headers->file_header.NumberOfSections, "x"); addr += 2;
@@ -291,46 +301,52 @@ static void header(RBinFile *bf) {
 	struct r_bin_t *rbin = bf->rbin;
 	rbin->cb_printf ("PE file header:\n");
 	rbin->cb_printf ("IMAGE_NT_HEADERS\n");
-	rbin->cb_printf ("\tSignature : 0x%x\n", bin->nt_headers->Signature);
+	rbin->cb_printf ("  Signature : 0x%x\n", bin->nt_headers->Signature);
 	rbin->cb_printf ("IMAGE_FILE_HEADERS\n");
-	rbin->cb_printf ("\tMachine : 0x%x\n", bin->nt_headers->file_header.Machine);
-	rbin->cb_printf ("\tNumberOfSections : 0x%x\n", bin->nt_headers->file_header.NumberOfSections);
-	rbin->cb_printf ("\tTimeDateStamp : 0x%x\n", bin->nt_headers->file_header.TimeDateStamp);
-	rbin->cb_printf ("\tPointerToSymbolTable : 0x%x\n", bin->nt_headers->file_header.PointerToSymbolTable);
-	rbin->cb_printf ("\tNumberOfSymbols : 0x%x\n", bin->nt_headers->file_header.NumberOfSymbols);
-	rbin->cb_printf ("\tSizeOfOptionalHeader : 0x%x\n", bin->nt_headers->file_header.SizeOfOptionalHeader);
-	rbin->cb_printf ("\tCharacteristics : 0x%x\n", bin->nt_headers->file_header.Characteristics);
+	rbin->cb_printf ("  Machine : 0x%x\n", bin->nt_headers->file_header.Machine);
+	rbin->cb_printf ("  NumberOfSections : 0x%x\n", bin->nt_headers->file_header.NumberOfSections);
+	rbin->cb_printf ("  TimeDateStamp : 0x%x\n", bin->nt_headers->file_header.TimeDateStamp);
+	rbin->cb_printf ("  PointerToSymbolTable : 0x%x\n", bin->nt_headers->file_header.PointerToSymbolTable);
+	rbin->cb_printf ("  NumberOfSymbols : 0x%x\n", bin->nt_headers->file_header.NumberOfSymbols);
+	rbin->cb_printf ("  SizeOfOptionalHeader : 0x%x\n", bin->nt_headers->file_header.SizeOfOptionalHeader);
+	rbin->cb_printf ("  Characteristics : 0x%x\n", bin->nt_headers->file_header.Characteristics);
 	rbin->cb_printf ("IMAGE_OPTIONAL_HEADERS\n");
-	rbin->cb_printf ("\tMagic : 0x%x\n", bin->nt_headers->optional_header.Magic);
-	rbin->cb_printf ("\tMajorLinkerVersion : 0x%x\n", bin->nt_headers->optional_header.MajorLinkerVersion);
-	rbin->cb_printf ("\tMinorLinkerVersion : 0x%x\n", bin->nt_headers->optional_header.MinorLinkerVersion);
-	rbin->cb_printf ("\tSizeOfCode : 0x%x\n", bin->nt_headers->optional_header.SizeOfCode);
-	rbin->cb_printf ("\tSizeOfInitializedData : 0x%x\n", bin->nt_headers->optional_header.SizeOfInitializedData);
-	rbin->cb_printf ("\tSizeOfUninitializedData : 0x%x\n", bin->nt_headers->optional_header.SizeOfUninitializedData);
-	rbin->cb_printf ("\tAddressOfEntryPoint : 0x%x\n", bin->nt_headers->optional_header.AddressOfEntryPoint);
-	rbin->cb_printf ("\tBaseOfCode : 0x%x\n", bin->nt_headers->optional_header.BaseOfCode);
-	rbin->cb_printf ("\tBaseOfData : 0x%x\n", bin->nt_headers->optional_header.BaseOfData);
-	rbin->cb_printf ("\tImageBase : 0x%x\n", bin->nt_headers->optional_header.ImageBase);
-	rbin->cb_printf ("\tSectionAlignment : 0x%x\n", bin->nt_headers->optional_header.SectionAlignment);
-	rbin->cb_printf ("\tFileAlignment : 0x%x\n", bin->nt_headers->optional_header.FileAlignment);
-	rbin->cb_printf ("\tMajorOperatingSystemVersion : 0x%x\n", bin->nt_headers->optional_header.MajorOperatingSystemVersion);
-	rbin->cb_printf ("\tMinorOperatingSystemVersion : 0x%x\n", bin->nt_headers->optional_header.MinorOperatingSystemVersion);
-	rbin->cb_printf ("\tMajorImageVersion : 0x%x\n", bin->nt_headers->optional_header.MajorImageVersion);
-	rbin->cb_printf ("\tMinorImageVersion : 0x%x\n", bin->nt_headers->optional_header.MinorImageVersion);
-	rbin->cb_printf ("\tMajorSubsystemVersion : 0x%x\n", bin->nt_headers->optional_header.MajorSubsystemVersion);
-	rbin->cb_printf ("\tMinorSubsystemVersion : 0x%x\n", bin->nt_headers->optional_header.MinorSubsystemVersion);
-	rbin->cb_printf ("\tWin32VersionValue : 0x%x\n", bin->nt_headers->optional_header.Win32VersionValue);
-	rbin->cb_printf ("\tSizeOfImage : 0x%x\n", bin->nt_headers->optional_header.SizeOfImage);
-	rbin->cb_printf ("\tSizeOfHeaders : 0x%x\n", bin->nt_headers->optional_header.SizeOfHeaders);
-	rbin->cb_printf ("\tCheckSum : 0x%x\n", bin->nt_headers->optional_header.CheckSum);
-	rbin->cb_printf ("\tSubsystem : 0x%x\n", bin->nt_headers->optional_header.Subsystem);
-	rbin->cb_printf ("\tDllCharacteristics : 0x%x\n", bin->nt_headers->optional_header.DllCharacteristics);
-	rbin->cb_printf ("\tSizeOfStackReserve : 0x%x\n", bin->nt_headers->optional_header.SizeOfStackReserve);
-	rbin->cb_printf ("\tSizeOfStackCommit : 0x%x\n", bin->nt_headers->optional_header.SizeOfStackCommit);
-	rbin->cb_printf ("\tSizeOfHeapReserve : 0x%x\n", bin->nt_headers->optional_header.SizeOfHeapReserve);
-	rbin->cb_printf ("\tSizeOfHeapCommit : 0x%x\n", bin->nt_headers->optional_header.SizeOfHeapCommit);
-	rbin->cb_printf ("\tLoaderFlags : 0x%x\n", bin->nt_headers->optional_header.LoaderFlags);
-	rbin->cb_printf ("\tNumberOfRvaAndSizes : 0x%x\n", bin->nt_headers->optional_header.NumberOfRvaAndSizes);
+	rbin->cb_printf ("  Magic : 0x%x\n", bin->nt_headers->optional_header.Magic);
+	rbin->cb_printf ("  MajorLinkerVersion : 0x%x\n", bin->nt_headers->optional_header.MajorLinkerVersion);
+	rbin->cb_printf ("  MinorLinkerVersion : 0x%x\n", bin->nt_headers->optional_header.MinorLinkerVersion);
+	rbin->cb_printf ("  SizeOfCode : 0x%x\n", bin->nt_headers->optional_header.SizeOfCode);
+	rbin->cb_printf ("  SizeOfInitializedData : 0x%x\n", bin->nt_headers->optional_header.SizeOfInitializedData);
+	rbin->cb_printf ("  SizeOfUninitializedData : 0x%x\n", bin->nt_headers->optional_header.SizeOfUninitializedData);
+	rbin->cb_printf ("  AddressOfEntryPoint : 0x%x\n", bin->nt_headers->optional_header.AddressOfEntryPoint);
+	rbin->cb_printf ("  BaseOfCode : 0x%x\n", bin->nt_headers->optional_header.BaseOfCode);
+	rbin->cb_printf ("  BaseOfData : 0x%x\n", bin->nt_headers->optional_header.BaseOfData);
+	rbin->cb_printf ("  ImageBase : 0x%x\n", bin->nt_headers->optional_header.ImageBase);
+	rbin->cb_printf ("  SectionAlignment : 0x%x\n", bin->nt_headers->optional_header.SectionAlignment);
+	rbin->cb_printf ("  FileAlignment : 0x%x\n", bin->nt_headers->optional_header.FileAlignment);
+	rbin->cb_printf ("  MajorOperatingSystemVersion : 0x%x\n", bin->nt_headers->optional_header.MajorOperatingSystemVersion);
+	rbin->cb_printf ("  MinorOperatingSystemVersion : 0x%x\n", bin->nt_headers->optional_header.MinorOperatingSystemVersion);
+	rbin->cb_printf ("  MajorImageVersion : 0x%x\n", bin->nt_headers->optional_header.MajorImageVersion);
+	rbin->cb_printf ("  MinorImageVersion : 0x%x\n", bin->nt_headers->optional_header.MinorImageVersion);
+	rbin->cb_printf ("  MajorSubsystemVersion : 0x%x\n", bin->nt_headers->optional_header.MajorSubsystemVersion);
+	rbin->cb_printf ("  MinorSubsystemVersion : 0x%x\n", bin->nt_headers->optional_header.MinorSubsystemVersion);
+	rbin->cb_printf ("  Win32VersionValue : 0x%x\n", bin->nt_headers->optional_header.Win32VersionValue);
+	rbin->cb_printf ("  SizeOfImage : 0x%x\n", bin->nt_headers->optional_header.SizeOfImage);
+	rbin->cb_printf ("  SizeOfHeaders : 0x%x\n", bin->nt_headers->optional_header.SizeOfHeaders);
+	rbin->cb_printf ("  CheckSum : 0x%x\n", bin->nt_headers->optional_header.CheckSum);
+	rbin->cb_printf ("  Subsystem : 0x%x\n", bin->nt_headers->optional_header.Subsystem);
+	rbin->cb_printf ("  DllCharacteristics : 0x%x\n", bin->nt_headers->optional_header.DllCharacteristics);
+	rbin->cb_printf ("  SizeOfStackReserve : 0x%x\n", bin->nt_headers->optional_header.SizeOfStackReserve);
+	rbin->cb_printf ("  SizeOfStackCommit : 0x%x\n", bin->nt_headers->optional_header.SizeOfStackCommit);
+	rbin->cb_printf ("  SizeOfHeapReserve : 0x%x\n", bin->nt_headers->optional_header.SizeOfHeapReserve);
+	rbin->cb_printf ("  SizeOfHeapCommit : 0x%x\n", bin->nt_headers->optional_header.SizeOfHeapCommit);
+	rbin->cb_printf ("  LoaderFlags : 0x%x\n", bin->nt_headers->optional_header.LoaderFlags);
+	rbin->cb_printf ("  NumberOfRvaAndSizes : 0x%x\n", bin->nt_headers->optional_header.NumberOfRvaAndSizes);
+	RListIter *it;
+	Pe_image_rich_entry *entry;
+	rbin->cb_printf ("RICH_FIELDS\n");
+	r_list_foreach (bin->rich_entries, it, entry) {
+		rbin->cb_printf ("  Product: %d Name: %s Version: %d Times: %d\n", entry->productId, entry->productName, entry->minVersion, entry->timesUsed);
+	}
 	int i;
 	for (i = 0; i < PE_IMAGE_DIRECTORY_ENTRIES - 1; i++) {
 		if (bin->nt_headers->optional_header.DataDirectory[i].Size > 0) {
@@ -382,8 +398,8 @@ static void header(RBinFile *bf) {
 				rbin->cb_printf ("IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR\n");
 				break;
 			}
-			rbin->cb_printf ("\tVirtualAddress : 0x%x\n", bin->nt_headers->optional_header.DataDirectory[i].VirtualAddress);
-			rbin->cb_printf ("\tSize : 0x%x\n", bin->nt_headers->optional_header.DataDirectory[i].Size);
+			rbin->cb_printf ("  VirtualAddress : 0x%x\n", bin->nt_headers->optional_header.DataDirectory[i].VirtualAddress);
+			rbin->cb_printf ("  Size : 0x%x\n", bin->nt_headers->optional_header.DataDirectory[i].Size);
 		}
 	}
 }
@@ -395,11 +411,9 @@ RBinPlugin r_bin_plugin_pe = {
 	.desc = "PE bin plugin",
 	.license = "LGPL3",
 	.get_sdb = &get_sdb,
-	.load = &load,
 	.load_buffer = &load_buffer,
-	.load_bytes = &load_bytes,
 	.destroy = &destroy,
-	.check_bytes = &check_bytes,
+	.check_buffer = &check_buffer,
 	.baddr = &baddr,
 	.binsym = &binsym,
 	.entries = &entries,
@@ -415,10 +429,11 @@ RBinPlugin r_bin_plugin_pe = {
 	.minstrlen = 4,
 	.create = &create,
 	.get_vaddr = &get_vaddr,
-	.write = &r_bin_write_pe
+	.write = &r_bin_write_pe,
+	.hashes = &compute_hashes
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_BIN,
 	.data = &r_bin_plugin_pe,

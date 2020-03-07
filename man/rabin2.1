@@ -5,7 +5,7 @@
 .Nd Binary program info extractor
 .Sh SYNOPSIS
 .Nm rabin2
-.Op Fl AceghHiIsSMzlpRrLxvhqQV
+.Op Fl AceghHiIsSMzlpRrLxvhqQTuUwV
 .Op Fl a Ar arch
 .Op Fl b Ar bits
 .Op Fl B Ar addr
@@ -110,12 +110,20 @@ Show exported symbols
 Show sections
 .It Fl SS
 Show segments
+.It Fl t
+Show file hashes
+.It Fl T
+Show Certificates
 .It Fl u
 Unfiltered (no rename duplicated symbols/sections)
+.It Fl U
+Show Resources
 .It Fl v
 Show version information
 .It Fl V
 Show binary version information
+.It Fl w
+Show try/catch blocks
 .It Fl x
 Extract all sub binaries from a fat binary (f.ex: fatmach0)
 .It Fl X Ar format file ...
@@ -139,9 +147,9 @@ RABIN2_MAXSTRBUF same as r2 -e bin.maxstrbuf for rabin2
 .Pp
 RABIN2_DEBASE64 try to decode all strings as base64 if possible
 .Pp
-RABIN2_STRFILTER same as r2 -e bin.strfilter for rabin2
+RABIN2_STRFILTER same as r2 -e bin.str.filter for rabin2
 .Pp
-RABIN2_STRPURGE same as r2 -e bin.strpurge for rabin2
+RABIN2_STRPURGE same as r2 -e bin.str.purge for rabin2
 .Sh EXAMPLES
 .Pp
 List symbols of a program

@@ -70,7 +70,7 @@ RRangeItem *r_range_item_get(RRange *rgs, ut64 addr) {
 }
 
 /* returns the sum of all the ranges contained */
-// XXX: can be catched while adding/removing elements
+// XXX: can be caught while adding/removing elements
 R_API ut64 r_range_size(RRange *rgs) {
 	ut64 sum = 0;
 	RListIter *iter;
@@ -296,7 +296,6 @@ R_API void r_range_percent(RRange *rgs) {
 		} else {
 			step = dif / w;
 		}
-		seek = 0;
 	} else {
 		step = fr = to = 0;
 	}

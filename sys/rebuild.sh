@@ -43,6 +43,7 @@ RebuildIOSDebug() {
 RebuildJava() {
 	Rebuild shlr/java
 	Rebuild libr/asm
+	Rebuild libr/anal
 	Rebuild libr/bin
 	Rebuild libr/core
 }
@@ -77,6 +78,12 @@ RebuildGdb() {
 	Rebuild libr/debug
 }
 
+RebuildWindbg() {
+	Rebuild shlr/windbg
+	Rebuild libr/io
+	Rebuild libr/debug
+}
+
 RebuildZip() {
 	Rebuild shlr/zip
 	Rebuild libr/io
@@ -84,12 +91,14 @@ RebuildZip() {
 
 RebuildTcc() {
 	Rebuild shlr/tcc
+	Rebuild libr/parse
 }
 
 case "$1" in
 grub|fs)RebuildFs; ;;
 bin)    RebuildBin ; ;;
 gdb)    RebuildGdb ; ;;
+windbg) RebuildWindbg ; ;;
 sdb)    RebuildSdb ; ;;
 spp)    RebuildSpp ; ;;
 tcc)    RebuildTcc ; ;;

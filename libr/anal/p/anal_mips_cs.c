@@ -1,4 +1,4 @@
-/* radare2 - LGPL - Copyright 2013-2018 - pancake */
+/* radare2 - LGPL - Copyright 2013-2019 - pancake */
 
 #include <r_asm.h>
 #include <r_lib.h>
@@ -73,9 +73,9 @@
 #define USE_DS 0
 #if USE_DS
 // emit ERR trap if executed in a delay slot
-#define ES_TRAP_DS() "0,$ds,>,?{,$$,1,TRAP,BREAK,},"
+#define ES_TRAP_DS() "$ds,!,!,?{,$$,1,TRAP,BREAK,},"
 // jump to address
-#define ES_J(addr) addr",$jt,=,1,$ds,=,"
+#define ES_J(addr) addr",SETJT,1,SETD"
 #else
 #define ES_TRAP_DS() ""
 #define ES_J(addr) addr",pc,="
@@ -175,14 +175,13 @@ static const char *arg(csh *handle, cs_insn *insn, char *buf, int n) {
 #define ARG(x) (*str[x]!=0)?str[x]:arg(handle, insn, str[x], x)
 
 static int analop_esil(RAnal *a, RAnalOp *op, ut64 addr, const ut8 *buf, int len, csh *handle, cs_insn *insn) {
-	char str[8][32];
+	char str[8][32] = {{0}};
 	int i;
 
 	r_strbuf_init (&op->esil);
 	r_strbuf_set (&op->esil, "");
 
 	if (insn) {
-		opex (&op->opex, *handle, insn);
 		// caching operands
 		for (i = 0; i < insn->detail->mips.op_count && i < 8; i++) {
 			*str[i] = 0;
@@ -637,10 +636,43 @@ static void op_fillval(RAnal *anal, RAnalOp *op, csh *handle, cs_insn *insn) {
 		SET_SRC_DST_3_REG_OR_IMM (op);
 		break;
 	case R_ANAL_OP_TYPE_MOV:
-		SET_SRC_DST_2_REGS (op);
+		SET_SRC_DST_3_REG_OR_IMM (op);
 		break;
-	case R_ANAL_OP_TYPE_DIV:
-		SET_SRC_DST_3_REGS (op);
+	case R_ANAL_OP_TYPE_DIV: // UDIV
+#if 0
+capstone bug
+------------
+	$ r2 -a mips -e cfg.bigendian=1 -c "wx 0083001b" -
+	// should be 3 regs, right?
+	[0x00000000]> aoj~{}
+	[
+	  {
+	    "opcode": "divu zero, a0, v1",
+	    "disasm": "divu zero, a0, v1",
+	    "mnemonic": "divu",
+	    "sign": false,
+	    "prefix": 0,
+	    "id": 192,
+	    "opex": {
+	      "operands": [
+		{
+		  "type": "reg",
+		  "value": "a0"
+		},
+		{
+		  "type": "reg",
+		  "value": "v1"
+		}
+	      ]
+	    },
+#endif
+		if (OPERAND(0).type == MIPS_OP_REG && OPERAND(1).type == MIPS_OP_REG && OPERAND(2).type == MIPS_OP_REG) {
+			SET_SRC_DST_3_REGS (op);
+		} else if (OPERAND(0).type == MIPS_OP_REG && OPERAND(1).type == MIPS_OP_REG) {
+			SET_SRC_DST_2_REGS (op);
+		} else {
+			eprintf ("Unknown div at 0x%08"PFMT64x"\n", op->addr);
+		}
 		break;
 	}
 	if (insn && (insn->id == MIPS_INS_SLTI || insn->id == MIPS_INS_SLTIU)) {
@@ -670,7 +702,7 @@ static void set_opdir(RAnalOp *op) {
         }
 }
 
-static int analop(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) {
+static int analop(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len, RAnalOpMask mask) {
 	int n, ret, opsize = -1;
 	static csh hndl = 0;
 	static int omode = -1;
@@ -701,6 +733,7 @@ static int analop(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) 
 // XXX no arch->cpu ?!?! CS_MODE_MICRO, N64
 	op->delay = 0;
 	op->type = R_ANAL_OP_TYPE_ILL;
+	op->addr = addr;
 	if (len < 4) {
 		return -1;
 	}
@@ -714,7 +747,16 @@ static int analop(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) 
 	}
 	n = cs_disasm (hndl, (ut8*)buf, len, addr, 1, &insn);
 	if (n < 1 || insn->size < 1) {
+		if (mask & R_ANAL_OP_MASK_DISASM) {
+			op->mnemonic = strdup ("invalid");
+		}
 		goto beach;
+	}
+	if (mask & R_ANAL_OP_MASK_DISASM) {
+		op->mnemonic = r_str_newf ("%s%s%s",
+			insn->mnemonic,
+			insn->op_str[0]?" ":"",
+			insn->op_str);
 	}
 	op->type = R_ANAL_OP_TYPE_NULL;
 	op->delay = 0;
@@ -811,7 +853,7 @@ static int analop(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) 
 		case MIPS_INS_BLEZALC:
 		case MIPS_INS_BGEZALC:
 		case MIPS_INS_BGTZALC:
-			// compact vesions (no delay)
+			// compact versions (no delay)
 			op->delay = 0;
 			op->fail = addr+4;
 			break;
@@ -1000,12 +1042,15 @@ static int analop(RAnal *anal, RAnalOp *op, ut64 addr, const ut8 *buf, int len) 
 	}
 beach:
 	set_opdir (op);
-	if (anal->decode) {
+	if (insn && mask & R_ANAL_OP_MASK_OPEX) {
+		opex (&op->opex, hndl, insn);
+	}
+	if (mask & R_ANAL_OP_MASK_ESIL) {
 		if (analop_esil (anal, op, addr, buf, len, &hndl, insn) != 0) {
 			r_strbuf_fini (&op->esil);
 		}
 	}
-	if (anal->fillval) {
+	if (mask & R_ANAL_OP_MASK_VAL) {
 		op_fillval (anal, op, &hndl, insn);
 	}
 	cs_free (insn, n);
@@ -1015,10 +1060,14 @@ fin:
 }
 
 static char *get_reg_profile(RAnal *anal) {
-	// XXX : 64bit profile
-	const char *p =
+	const char *p = NULL;
+	switch (anal->bits) {
+	default:
+	case 32: p =
 		"=PC    pc\n"
 		"=SP    sp\n"
+		"=BP    fp\n"
+		"=SN    v0\n"
 		"=A0    a0\n"
 		"=A1    a1\n"
 		"=A2    a2\n"
@@ -1058,14 +1107,71 @@ static char *get_reg_profile(RAnal *anal) {
 		"gpr	fp	.32	120	0\n"
 		"gpr	ra	.32	124	0\n"
 		"gpr	pc	.32	128	0\n"
-		"gpr	hi	.64	132	0\n"
-		"gpr	lo	.64	140	0\n"
-		"gpr	t	.32	148	0\n";
-	return strdup (p);
+		"gpr	hi	.32	132	0\n"
+		"gpr	lo	.32	136	0\n"
+		"gpr	t	.32	140	0\n";
+		break;
+	case 64: p =
+		"=PC    pc\n"
+		"=SP    sp\n"
+		"=BP    fp\n"
+		"=A0    a0\n"
+		"=A1    a1\n"
+		"=A2    a2\n"
+		"=A3    a3\n"
+		"=SN    v0\n"
+		"=R0    v0\n"
+		"=R1    v1\n"
+		"gpr	zero	.64	?	0\n"
+		"gpr	at	.64	8	0\n"
+		"gpr	v0	.64	16	0\n"
+		"gpr	v1	.64	24	0\n"
+		"gpr	a0	.64	32	0\n"
+		"gpr	a1	.64	40	0\n"
+		"gpr	a2	.64	48	0\n"
+		"gpr	a3	.64	56	0\n"
+		"gpr	t0	.64	64	0\n"
+		"gpr	t1	.64	72	0\n"
+		"gpr	t2 	.64	80	0\n"
+		"gpr	t3 	.64	88	0\n"
+		"gpr	t4 	.64	96	0\n"
+		"gpr	t5 	.64	104	0\n"
+		"gpr	t6 	.64	112	0\n"
+		"gpr	t7 	.64	120	0\n"
+		"gpr	s0	.64	128	0\n"
+		"gpr	s1	.64	136	0\n"
+		"gpr	s2	.64	144	0\n"
+		"gpr	s3	.64	152	0\n"
+		"gpr	s4 	.64	160	0\n"
+		"gpr	s5 	.64	168	0\n"
+		"gpr	s6 	.64	176	0\n"
+		"gpr	s7 	.64	184	0\n"
+		"gpr	t8 	.64	192	0\n"
+		"gpr	t9 	.64	200	0\n"
+		"gpr	k0 	.64	208	0\n"
+		"gpr	k1 	.64	216	0\n"
+		"gpr	gp 	.64	224	0\n"
+		"gpr	sp	.64	232	0\n"
+		"gpr	fp	.64	240	0\n"
+		"gpr	ra	.64	248	0\n"
+		"gpr	pc	.64	256	0\n"
+		"gpr	hi	.64	264	0\n"
+		"gpr	lo	.64	272	0\n"
+		"gpr	t	.64	280	0\n";
+		break;
+	}
+	return p? strdup (p): NULL;
 }
 
 static int archinfo(RAnal *anal, int q) {
 	return 4;
+}
+
+static RList *anal_preludes(RAnal *anal) {
+#define KW(d,ds,m,ms) r_list_append (l, r_search_keyword_new((const ut8*)d,ds,(const ut8*)m, ms, NULL))
+	RList *l = r_list_newf ((RListFree)r_search_keyword_free);
+	KW ("\x27\xbd\x00", 3, NULL, 0);
+	return l;
 }
 
 RAnalPlugin r_anal_plugin_mips_cs = {
@@ -1076,11 +1182,12 @@ RAnalPlugin r_anal_plugin_mips_cs = {
 	.arch = "mips",
 	.get_reg_profile = get_reg_profile,
 	.archinfo = archinfo,
+	.preludes = anal_preludes,
 	.bits = 16|32|64,
 	.op = &analop,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_ANAL,
 	.data = &r_anal_plugin_mips_cs,

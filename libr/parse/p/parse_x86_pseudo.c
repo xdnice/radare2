@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2017 - nibble, pancake */
+/* radare - LGPL - Copyright 2009-2020 - nibble, pancake */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,6 +65,9 @@ static int replace (int argc, char *argv[], char *newstr) {
 		{ "jne", "if (var) goto #", {1}},
 		{ "lea",  "# = #", {1, 2}},
 		{ "mov",  "# = #", {1, 2}},
+		{ "movq",  "# = #", {1, 2}},
+		{ "movaps",  "# = #", {1, 2}},
+		{ "movups",  "# = #", {1, 2}},
 		{ "movsd",  "# = #", {1, 2}},
 		{ "movsx","# = #", {1, 2}},
 		{ "movsxd","# = #", {1, 2}},
@@ -72,12 +75,16 @@ static int replace (int argc, char *argv[], char *newstr) {
 		{ "movntdq", "# = #", {1, 2}},
 		{ "movnti", "# = #", {1, 2}},
 		{ "movntpd", "# = #", {1, 2}},
+		{ "pcmpeqb", "# == #", {1, 2}},
+
 		{ "movdqu", "# = #", {1, 2}},
 		{ "movdqa", "# = #", {1, 2}},
 		{ "pextrb", "# = (byte) # [#]", {1, 2, 3}},
 		{ "palignr", "# = # align #", {1, 2, 3}},
 		{ "pxor", "# ^= #", {1, 2}},
+		{ "xorps", "# ^= #", {1, 2}},
 		{ "mul",  "# = # * #", {1, 2, 3}},
+		{ "mulss",  "# = # * #", {1, 2, 3}},
 		{ "neg",  "# ~= #", {1, 1}},
 		{ "nop",  "", {0}},
 		{ "not",  "# = !#", {1, 1}},
@@ -146,11 +153,11 @@ static int replace (int argc, char *argv[], char *newstr) {
 	}
 
 	/* TODO: this is slow */
-	if (newstr != NULL) {
+	if (newstr) {
 		newstr[0] = '\0';
-		for (i=0; i<argc; i++) {
+		for (i = 0; i < argc; i++) {
 			strcat (newstr, argv[i]);
-			strcat (newstr, (i == 0 || i== argc - 1)?" ":",");
+			strcat (newstr, (i == 0 || i == argc - 1)? " ": ",");
 		}
 	}
 	return false;
@@ -170,8 +177,8 @@ static int parse (RParse *p, const char *data, char *str) {
 	if (!(buf = strdup (data))) {
 		return false;
 	}
+	*w0 = *w1 = *w2 = *w3 = '\0';
 	if (*buf) {
-		*w0 = *w1 = *w2 = *w3 = '\0';
 		end = strchr (buf, '\0');
 		ptr = strchr (buf, ' ');
 		if (!ptr) {
@@ -353,6 +360,7 @@ static inline void mk_reg_str(const char *regname, int delta, bool sign, bool at
 
 static bool varsub (RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *data, char *str, int len) {
 	RList *bpargs, *spargs;
+	RAnal *anal = p->analb.anal;
 	RAnalVar *bparg, *sparg;
 	RListIter *bpargiter, *spiter;
 	char oldstr[64], newstr[64];
@@ -414,12 +422,12 @@ static bool varsub (RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *dat
 	}
 
 	if (!p->varlist) {
-                free (tstr);
+		free (tstr);
 		return false;
-        }
-	bpargs = p->varlist (p->anal, f, 'b');
-	spargs = p->varlist (p->anal, f, 's');
-	/*iterate over stack pointer arguments/variables*/
+	}
+	bpargs = p->varlist (anal, f, 'b');
+	spargs = p->varlist (anal, f, 's');
+	/* Iterate over stack pointer arguments/variables */
 	bool ucase = *tstr >= 'A' && *tstr <= 'Z';
 	if (ucase && tstr[1]) {
 		ucase = tstr[1] >= 'A' && tstr[1] <= 'Z';
@@ -430,22 +438,15 @@ static bool varsub (RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *dat
 	}
 	r_list_foreach (spargs, spiter, sparg) {
 		// assuming delta always positive?
-		mk_reg_str (p->anal->reg->name[R_REG_NAME_SP], sparg->delta, true, att, ireg, oldstr, sizeof (oldstr));
+		if (p->get_ptr_at) {
+			sparg->delta = p->get_ptr_at (p->user, sparg, addr);
+		}
+		mk_reg_str (anal->reg->name[R_REG_NAME_SP], sparg->delta, true, att, ireg, oldstr, sizeof (oldstr));
 
 		if (ucase) {
 			r_str_case (oldstr, true);
 		}
-		parse_localvar (p, newstr, sizeof (newstr), sparg->name, p->anal->reg->name[R_REG_NAME_SP], '+', ireg, att);
-		if (ucase) {
-			char *plus = strchr (newstr, '+');
-			if (plus) {
-				*plus = 0;
-				r_str_case (newstr, true);
-				*plus = '+';
-			} else {
-				r_str_case (newstr, true);
-			}
-		}
+		parse_localvar (p, newstr, sizeof (newstr), sparg->name, anal->reg->name[R_REG_NAME_SP], '+', ireg, att);
 		char *ptr = strstr(tstr, oldstr);
 		if (ptr && (!att || *(ptr - 1) == ' ')) {
 			tstr = r_str_replace (tstr, oldstr, newstr, 1);
@@ -466,21 +467,11 @@ static bool varsub (RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *dat
 			sign = '-';
 			bparg->delta = -bparg->delta;
 		}
-		mk_reg_str (p->anal->reg->name[R_REG_NAME_BP], bparg->delta, sign=='+', att, ireg, oldstr, sizeof (oldstr));
+		mk_reg_str (anal->reg->name[R_REG_NAME_BP], bparg->delta, sign=='+', att, ireg, oldstr, sizeof (oldstr));
 		if (ucase) {
 			r_str_case (oldstr, true);
 		}
-		parse_localvar (p, newstr, sizeof (newstr), bparg->name, p->anal->reg->name[R_REG_NAME_BP], sign, ireg, att);
-		if (ucase) {
-			char *plus = strchr (newstr, sign);
-			if (plus) {
-				*plus = 0;
-				r_str_case (newstr, true);
-				*plus = sign;
-			} else {
-				r_str_case (newstr, true);
-			}
-		}
+		parse_localvar (p, newstr, sizeof (newstr), bparg->name, anal->reg->name[R_REG_NAME_BP], sign, ireg, att);
 		char *ptr = strstr (tstr, oldstr);
 		if (ptr && (!att || *(ptr - 1) == ' ')) {
 			tstr = r_str_replace (tstr, oldstr, newstr, 1);
@@ -494,7 +485,7 @@ static bool varsub (RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *dat
 			}
 		}
 		// Try with no spaces
-		snprintf (oldstr, sizeof (oldstr)-1, "[%s%c0x%x]", p->anal->reg->name[R_REG_NAME_BP], sign, bparg->delta);
+		snprintf (oldstr, sizeof (oldstr)-1, "[%s%c0x%x]", anal->reg->name[R_REG_NAME_BP], sign, bparg->delta);
 		if (strstr (tstr, oldstr) != NULL) {
 			tstr = r_str_replace (tstr, oldstr, newstr, 1);
 			break;
@@ -502,8 +493,8 @@ static bool varsub (RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *dat
 	}
 
 	char bp[32];
-	if (p->anal->reg->name[R_REG_NAME_BP]) {
-		strncpy (bp, p->anal->reg->name[R_REG_NAME_BP], sizeof (bp) - 1);
+	if (anal->reg->name[R_REG_NAME_BP]) {
+		strncpy (bp, anal->reg->name[R_REG_NAME_BP], sizeof (bp) - 1);
 		if (isupper ((ut8)*str)) {
 			r_str_case (bp, true);
 		}
@@ -514,8 +505,7 @@ static bool varsub (RParse *p, RAnalFunction *f, ut64 addr, int oplen, char *dat
 
 	bool ret = true;
 	if (len > strlen (tstr)) {
-		strncpy (str, tstr, strlen (tstr));
-		str[strlen (tstr)] = 0;
+		strcpy (str, tstr);
 	} else {
 		// TOO BIG STRING CANNOT REPLACE HERE
 		ret = false;
@@ -534,7 +524,7 @@ RParsePlugin r_parse_plugin_x86_pseudo = {
 	.varsub = &varsub,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_PARSE,
 	.data = &r_parse_plugin_x86_pseudo,

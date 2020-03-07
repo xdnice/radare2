@@ -17,15 +17,15 @@
 # --pancake
 
 if [ -n "`git log -n 1 | grep Release`" ]; then
-	VERS=`git tag --sort=committerdate | tail -n 1`
-	PREV=`git tag --sort=committerdate | tail -n 2 | head -n1`
+	VERS=`git tag --sort=committerdate | grep -v conti | tail -n 1`
+	PREV=`git tag --sort=committerdate | grep -v conti | tail -n 2 | head -n1`
 else
 	VERS=HEAD
-	PREV=`git tag --sort=committerdate | tail -n 1`
+	PREV=`git tag --sort=committerdate | grep -v conti | tail -n 1`
 fi
 
 git log ${PREV}..${VERS} > .l
-cat .l | grep ^Author | cut -d : -f 2- | sort -u > .A
+cat .l | grep ^Author | cut -d : -f 2- | sed -e 's,radare,pancake,' | sort -u > .A
 
 echo "Release Notes"
 echo "-------------"

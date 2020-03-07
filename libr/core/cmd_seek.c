@@ -1,4 +1,4 @@
-/* radare - LGPL - Copyright 2009-2018 - pancake */
+/* radare - LGPL - Copyright 2009-2020 - pancake */
 
 #include "r_types.h"
 #include "r_config.h"
@@ -10,6 +10,7 @@
 static const char *help_msg_s[] = {
 	"Usage: s", "", " # Help for the seek commands. See ?$? to see all variables",
 	"s", "", "Print current address",
+	"s.", "hexoff", "Seek honoring a base from core->offset",
 	"s:", "pad", "Print current address with N padded zeros (defaults to 8)",
 	"s", " addr", "Seek to address",
 	"s-", "", "Undo seek",
@@ -22,7 +23,6 @@ static const char *help_msg_s[] = {
 	"s[j*=!]", "", "List undo seek history (JSON, =list, *r2, !=names, s==)",
 	"s/", " DATA", "Search for next occurrence of 'DATA'",
 	"s/x", " 9091", "Search for next occurrence of \\x90\\x91",
-	"s.", "hexoff", "Seek honoring a base from core->offset",
 	"sa", " [[+-]a] [asz]", "Seek asz (or bsize) aligned to addr",
 	"sb", "", "Seek aligned to bb start",
 	"sC", "[?] string", "Seek to comment matching given string",
@@ -68,63 +68,13 @@ static void cmd_seek_init(RCore *core) {
 	DEFINE_CMD_DESCRIPTOR (core, ss);
 }
 
-#define OPDELTA 32
-static ut64 prevop_addr(RCore *core, ut64 addr) {
-	ut8 buf[OPDELTA * 2];
-	ut64 target, base;
-	RAnalBlock *bb;
-	RAnalOp op;
-	int len, ret, i;
-	int minop = r_anal_archinfo (core->anal, R_ANAL_ARCHINFO_MIN_OP_SIZE);
-	int maxop = r_anal_archinfo (core->anal, R_ANAL_ARCHINFO_MAX_OP_SIZE);
-
-	if (minop == maxop) {
-		if (minop == -1) {
-			return addr - 4;
-		}
-		return addr - minop;
-	}
-
-	// let's see if we can use anal info to get the previous instruction
-	// TODO: look in the current basicblock, then in the current function
-	// and search in all functions only as a last chance, to try to speed
-	// up the process.
-	bb = r_anal_bb_from_offset (core->anal, addr - minop);
-	if (bb) {
-		ut64 res = r_anal_bb_opaddr_at (bb, addr - minop);
-		if (res != UT64_MAX) {
-			return res;
-		}
-	}
-	// if we anal info didn't help then fallback to the dumb solution.
-	target = addr;
-	base = target - OPDELTA;
-	r_io_read_at (core->io, base, buf, sizeof (buf));
-	for (i = 0; i < sizeof (buf); i++) {
-		ret = r_anal_op (core->anal, &op, base + i,
-			buf + i, sizeof (buf) - i, R_ANAL_OP_MASK_BASIC);
-		if (!ret) {
-			continue;
-		}
-		len = op.size;
-		r_anal_op_fini (&op); // XXX
-		if (len < 1) {
-			continue;
-		}
-		if (target == base + i + len) {
-			return base + i;
-		}
-		i += len - 1;
-	}
-	return target - 4;
-}
-
 static void __init_seek_line(RCore *core) {
 	ut64 from, to;
 
 	r_config_bump (core->config, "lines.to");
 	from = r_config_get_i (core->config, "lines.from");
-	to = r_config_get_i (core->config, "lines.to");
+	const char *to_str = r_config_get (core->config, "lines.to");
+	to = r_num_math (core->num, (to_str && *to_str) ? to_str : "$s");
 	if (r_core_lines_initcache (core, from, to) == -1) {
 		eprintf ("ERROR: \"lines.from\" and \"lines.to\" must be set\n");
 	}
@@ -191,9 +141,7 @@ R_API int r_core_lines_currline(RCore *core) {  // make priv8 again
 }
 
 R_API int r_core_lines_initcache(RCore *core, ut64 start_addr, ut64 end_addr) {
-	int i, line_count;
-	int bsz = core->blocksize;
-	char *buf;
+	int i, bsz = core->blocksize;
 	ut64 off = start_addr;
 	ut64 baddr;
 	if (start_addr == UT64_MAX || end_addr == UT64_MAX) {
@@ -206,17 +154,11 @@ R_API int r_core_lines_initcache(RCore *core, ut64 start_addr, ut64 end_addr) {
 		return -1;
 	}
 
-#if 0	//review this
-	{
-		RIOSection *s = r_io_section_mget_in (core->io, core->offset);
-		baddr = s? s->paddr: r_config_get_i (core->config, "bin.baddr");
-	}
-#endif
 	baddr = r_config_get_i (core->config, "bin.baddr");
 
-	line_count = start_addr? 0: 1;
+	int line_count = start_addr? 0: 1;
 	core->print->lines_cache[0] = start_addr? 0: baddr;
-	buf = malloc (bsz);
+	char *buf = malloc (bsz);
 	if (!buf) {
 		return -1;
 	}
@@ -227,18 +169,22 @@ R_API int r_core_lines_initcache(RCore *core, ut64 start_addr, ut64 end_addr) {
 		}
 		r_io_read_at (core->io, off, (ut8 *) buf, bsz);
 		for (i = 0; i < bsz; i++) {
-			if (buf[i] == '\n') {
-				core->print->lines_cache[line_count] = start_addr? off + i + 1: off + i + 1 + baddr;
-				line_count++;
-				if (line_count % bsz == 0) {
-					ut64 *tmp = realloc (core->print->lines_cache,
-						(line_count + bsz) * sizeof (ut64));
-					if (tmp) {
-						core->print->lines_cache = tmp;
-					} else {
-						R_FREE (core->print->lines_cache);
-						goto beach;
-					}
+			if (buf[i] != '\n') {
+				continue;
+			}
+			if ((line_count + 1) >= bsz) {
+				break;
+			}
+			core->print->lines_cache[line_count] = start_addr? off + i + 1: off + i + 1 + baddr;
+			line_count++;
+			if (line_count % bsz == 0) {
+				ut64 *tmp = realloc (core->print->lines_cache,
+					(line_count + bsz) * sizeof (ut64));
+				if (tmp) {
+					core->print->lines_cache = tmp;
+				} else {
+					R_FREE (core->print->lines_cache);
+					goto beach;
 				}
 			}
 		}
@@ -273,6 +219,34 @@ static void seek_to_register(RCore *core, const char *input, bool is_silent) {
 	}
 }
 
+static int cmd_sort(void *data, const char *input) { // "sort"
+	RCore *core = (RCore *)data;
+	const char *arg = strchr (input, ' ');
+	if (arg) {
+		arg = r_str_trim_head_ro (arg + 1);
+	}
+	switch (*input) {
+	case '?': // "sort?"
+		eprintf ("Usage: sort # sort the contents of the file\n");
+		break;
+	default: // "ls"
+		if (!arg) {
+			arg = "";
+		}
+		if (r_fs_check (core->fs, arg)) {
+			r_core_cmdf (core, "md %s", arg);
+		} else {
+			char *res = r_syscmd_sort (arg);
+			if (res) {
+				r_cons_print (res);
+				free (res);
+			}
+		}
+		break;
+	}
+	return 0;
+}
+
 static int cmd_seek_opcode_backward(RCore *core, int numinstr) {
 	int i, val = 0;
 	// N previous instructions
@@ -289,7 +263,7 @@ static int cmd_seek_opcode_backward(RCore *core, int numinstr) {
 		addr = core->offset;
 		const int mininstrsize = r_anal_archinfo (core->anal, R_ANAL_ARCHINFO_MIN_OP_SIZE);
 		for (i = 0; i < numinstr; i++) {
-			ut64 prev_addr = prevop_addr (core, addr);
+			ut64 prev_addr = r_core_prevop_addr_force (core, addr, 1);
 			if (prev_addr == UT64_MAX) {
 				prev_addr = addr - mininstrsize;
 			}
@@ -364,7 +338,7 @@ static int cmd_seek(void *data, const char *input) {
 		free (dup);
 	}
 	const char *inputnum = strchr (input, ' ');
-	{
+	if (r_str_cmp (input, "ort", 3)) {					// hack to handle Invalid Argument for sort
 		const char *u_num = inputnum? inputnum + 1: input + 1;
 		off = r_num_math (core->num, u_num);
 		if (*u_num == '-') {
@@ -474,7 +448,7 @@ static int cmd_seek(void *data, const char *input) {
 	{
 		ut64 addr = r_num_math (core->num, input + 1);
 		if (core->num->nc.errors) {
-			if (r_cons_singleton ()->is_interactive) {
+			if (r_cons_singleton ()->context->is_interactive) {
 				eprintf ("Cannot seek to unknown address '%s'\n", core->num->nc.calc_buf);
 			}
 			break;
@@ -550,9 +524,7 @@ static int cmd_seek(void *data, const char *input) {
 				r_list_foreach (list, iter, undo) {
 					char *name = NULL;
 
-					core->flags->space_strict = true;
 					RFlagItem *f = r_flag_get_at (core->flags, undo->off, true);
-					core->flags->space_strict = false;
 					if (f) {
 						if (f->offset != undo->off) {
 							name = r_str_newf ("%s+%d", f->name,
@@ -577,18 +549,25 @@ static int cmd_seek(void *data, const char *input) {
 				}
 				r_list_free (list);
 			}
-			r_cons_printf ("[");
-			for (i = 0; i < lsz; ++i) {
+			PJ *pj = pj_new ();
+			pj_a (pj);
+			for (i = 0; i < lsz; i++) {
 				ut64 *addr = r_list_get_n (addrs, i);
 				const char *name = r_list_get_n (names, i);
-				// XXX(should the "name" field be optional? That might make
-				// a bit more sense.
-				r_cons_printf ("{\"offset\":%"PFMT64d",\"symbol\":\"%s\"}", *addr, name);
-				if (i != lsz - 1) {
-					r_cons_printf (",");
+				pj_o (pj);
+				pj_kn (pj, "offset", *addr);
+				if (name && *name) {
+					pj_ks (pj, "name", name);
 				}
+				if (core->io->undo.undos == i) {
+					pj_kb (pj, "current", true);
+				}
+				pj_end (pj);
 			}
-			r_cons_printf ("]\n");
+			pj_end (pj);
+			char *s = pj_drain (pj);
+			r_cons_printf ("%s\n", s);
+			free (s);
 			r_list_free (addrs);
 			r_list_free (names);
 		}
@@ -608,9 +587,7 @@ static int cmd_seek(void *data, const char *input) {
 				r_list_foreach (list, iter, undo) {
 					char *name = NULL;
 
-					core->flags->space_strict = true;
 					RFlagItem *f = r_flag_get_at (core->flags, undo->off, true);
-					core->flags->space_strict = false;
 					if (f) {
 						if (f->offset != undo->off) {
 							name = r_str_newf ("%s + %d\n", f->name,
@@ -752,7 +729,7 @@ static int cmd_seek(void *data, const char *input) {
 		case '\0': // "sf"
 			fcn = r_anal_get_fcn_in (core->anal, core->offset, 0);
 			if (fcn) {
-				r_core_seek (core, fcn->addr + r_anal_fcn_size (fcn), 1);
+				r_core_seek (core, r_anal_function_max_addr (fcn), 1);
 			}
 			break;
 		case ' ': // "sf "
@@ -771,13 +748,29 @@ static int cmd_seek(void *data, const char *input) {
 		break;
 	}
 	case 'o': // "so"
-		cmd_seek_opcode (core, input + 1);
+		switch (input[1]) {
+		case 'r':
+			if (input[2] == 't') {
+				cmd_sort (core, input);
+			} else {
+				return -1;
+			}
+			break;
+		case ' ':
+		case '\0':
+		case '+':
+		case '-':
+			cmd_seek_opcode (core, input + 1);
+			break;
+		default:
+			return -1;	// invalid command
+		}
 		break;
 	case 'g': // "sg"
 	{
-		RIOSection *s = r_io_section_vget (core->io, core->offset);
-		if (s) {
-			r_core_seek (core, s->vaddr, 1);
+		RIOMap *map  = r_io_map_get (core->io, core->offset);
+		if (map) {
+			r_core_seek (core, map->itv.addr, 1);
 		} else {
 			r_core_seek (core, 0, 1);
 		}
@@ -788,10 +781,10 @@ static int cmd_seek(void *data, const char *input) {
 		if (!core->file) {
 			break;
 		}
-		RIOSection *s = r_io_section_vget (core->io, core->offset);
+		RIOMap *map = r_io_map_get (core->io, core->offset);
 		// XXX: this +2 is a hack. must fix gap between sections
-		if (s) {
-			r_core_seek (core, s->vaddr + s->size + 2, 1);
+		if (map) {
+			r_core_seek (core, map->itv.addr + map->itv.size + 2, 1);
 		} else {
 			r_core_seek (core, r_io_fd_size (core->io, core->file->fd), 1);
 		}

@@ -1,8 +1,11 @@
-files = [
+tags_r2_sources = [
+  'dylib',
   'alloc',
+  'time',
   'env',
   'fs',
   'network',
+  'threads',
   'process',
   'stdout',
   'string'
@@ -18,7 +21,7 @@ for fname in argv[1:]:
 '''
 
 custom_target('tags.r2',
-  input: files,
+  input: tags_r2_sources,
   output: 'tags.r2',
   command: [py3_exe, '-c', script, '@INPUT@'],
   capture: true,

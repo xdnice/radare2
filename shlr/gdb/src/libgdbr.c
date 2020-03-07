@@ -13,12 +13,13 @@ int gdbr_init(libgdbr_t *g, bool is_server) {
 	g->no_ack = false;
 	g->stub_features.extended_mode = -1;
 	g->stub_features.pkt_sz = 64;
+	g->stub_features.P = true;
 	g->remote_file_fd = -1;
 	g->is_server = is_server;
 	g->send_max = 2500;
 	g->send_buff = (char *) calloc (g->send_max, 1);
 	g->page_size = 4096;
-	g->num_retries = 10; // safe number, should be ~2.5 seconds
+	g->num_retries = 40; // safe number, should be ~10 seconds
 	if (!g->send_buff) {
 		return -1;
 	}
@@ -30,6 +31,8 @@ int gdbr_init(libgdbr_t *g, bool is_server) {
 		return -1;
 	}
 	g->sock = r_socket_new (0);
+	g->gdbr_lock = r_th_lock_new (true);
+	g->gdbr_lock_depth = 0;
 	g->last_code = MSG_OK;
 	g->connected = 0;
 	g->data_len = 0;
@@ -41,6 +44,7 @@ int gdbr_init(libgdbr_t *g, bool is_server) {
 		return -1;
 	}
 	g->remote_type = GDB_REMOTE_TYPE_GDB;
+	g->isbreaked = false;
 	return 0;
 }
 
@@ -89,5 +93,7 @@ int gdbr_cleanup(libgdbr_t *g) {
 	g->send_len = 0;
 	R_FREE (g->send_buff);
 	R_FREE (g->read_buff);
+	r_socket_free (g->sock);
+	r_th_lock_free (g->gdbr_lock);
 	return 0;
 }

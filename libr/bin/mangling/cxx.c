@@ -1,34 +1,10 @@
-/* radare - LGPL - Copyright 2013-2018 - pancake */
+/* radare - LGPL - Copyright 2013-2019 - pancake */
 
 #include <r_bin.h>
 #include "../i/private.h"
 #include "./cxx/demangle.h"
 
-static inline bool is_cxx_symbol (const char *name) {
-	r_return_val_if_fail (name, false);
-	if (!strncmp (name, "_Z", 2)) {
-		return true;
-	}
-	if (!strncmp (name, "__Z", 3)) {
-		return true;
-	}
-	return false;
-}
-
-// TODO: deprecate
-R_API bool r_bin_is_cxx (RBinFile *binfile) {
-	RListIter *iter;
-	RBinImport *import;
-	RBinObject *o = binfile->o;
-	r_list_foreach (o->imports, iter, import) {
-		if (is_cxx_symbol (import->name)) {
-			return true;
-		}
-	}
-	return false;
-}
-
-R_API char *r_bin_demangle_cxx(RBinFile *binfile, const char *str, ut64 vaddr) {
+R_API char *r_bin_demangle_cxx(RBinFile *bf, const char *str, ut64 vaddr) {
 	// DMGL_TYPES | DMGL_PARAMS | DMGL_ANSI | DMGL_VERBOSE
 	// | DMGL_RET_POSTFIX | DMGL_TYPES;
 	int i;
@@ -57,8 +33,15 @@ R_API char *r_bin_demangle_cxx(RBinFile *binfile, const char *str, ut64 vaddr) {
 	}
 	// remove CXXABI suffix
 	char *cxxabi = strstr (p, "@@CXXABI");
+	char *glibcxx = strstr (p, "@GLIBCXX");
 	if (cxxabi) {
 		*cxxabi = '\0';
+	} else if (glibcxx) {
+		if (p < glibcxx && glibcxx[-1] == '@') {
+			glibcxx[-1] = '\0';
+		} else {
+			*glibcxx = '\0';
+		}
 	}
 #if WITH_GPL
 	char *out = cplus_demangle_v3 (p, flags);
@@ -68,7 +51,6 @@ R_API char *r_bin_demangle_cxx(RBinFile *binfile, const char *str, ut64 vaddr) {
 #endif
 	free (tmpstr);
 	if (out) {
-		r_str_replace_char (out, ' ', 0);
 		char *sign = (char *)strchr (out, '(');
 		if (sign) {
 			char *str = out;
@@ -84,9 +66,18 @@ R_API char *r_bin_demangle_cxx(RBinFile *binfile, const char *str, ut64 vaddr) {
 			}
 			if (nerd && *nerd) {
 				*nerd = 0;
-				RBinSymbol *sym = r_bin_class_add_method (binfile, out, nerd + 2, 0);
-				if (sym) {
-					sym->vaddr = vaddr;
+				if (bf) {
+					RBinSymbol *sym = r_bin_file_add_method (bf, out, nerd + 2, 0);
+					if (sym) {
+						if (sym->vaddr != 0 && sym->vaddr != vaddr) {
+							if (bf && bf->rbin && bf->rbin->verbose) {
+								eprintf ("Dupped method found: %s\n", sym->name);
+							}
+						}
+						if (sym->vaddr == 0) {
+							sym->vaddr = vaddr;
+						}
+					}
 				}
 				*nerd = ':';
 			}

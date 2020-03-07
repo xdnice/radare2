@@ -166,7 +166,8 @@ enum LoadCommandType {
 	LC_LINKER_OPTIMIZATION_HINT = 0x0000002Eu,
 	LC_VERSION_MIN_TVOS     = 0x0000002Fu,
 	LC_VERSION_MIN_WATCHOS  = 0x00000030u,
-	LC_BUILD_VERSION = 0x32u
+	LC_NOTE                 = 0x00000031u,
+	LC_BUILD_VERSION        = 0x00000032u
 /*
 Load command 9
        cmd LC_BUILD_VERSION
@@ -363,7 +364,13 @@ enum BindOpcode {
 	BIND_OPCODE_DO_BIND                          = 0x90u,
 	BIND_OPCODE_DO_BIND_ADD_ADDR_ULEB            = 0xA0u,
 	BIND_OPCODE_DO_BIND_ADD_ADDR_IMM_SCALED      = 0xB0u,
-	BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB = 0xC0u
+	BIND_OPCODE_DO_BIND_ULEB_TIMES_SKIPPING_ULEB = 0xC0u,
+	BIND_OPCODE_THREADED                         = 0xD0u
+};
+
+enum BindSubOpcode {
+	BIND_SUBOPCODE_THREADED_SET_BIND_ORDINAL_TABLE_SIZE_ULEB = 0x00,
+	BIND_SUBOPCODE_THREADED_APPLY                            = 0x01,
 };
 
 enum {
@@ -430,7 +437,7 @@ enum {
 	SELF_LIBRARY_ORDINAL   = 0x0,
 	MAX_LIBRARY_ORDINAL    = 0xfd,
 	DYNAMIC_LOOKUP_ORDINAL = 0xfe,
-	EXECUTABLE_ORDINAL     = 0xff 
+	EXECUTABLE_ORDINAL     = 0xff
 };
 
 enum StabType {
@@ -1156,7 +1163,9 @@ enum CPUSubTypeARM {
 };
 
 enum CPUSubTypeARM64 {
-	CPU_SUBTYPE_ARM64_ALL   = 0
+	CPU_SUBTYPE_ARM64_ALL   = 0,
+	CPU_SUBTYPE_ARM64_V8    = 1,
+	CPU_SUBTYPE_ARM64E      = 2
 };
 
 enum CPUSubTypeSPARC {
@@ -1417,5 +1426,13 @@ sizeof(struct x86_thread_state_t) / sizeof(uint32_t);
 sizeof(struct x86_float_state_t) / sizeof(uint32_t);
 #define x86_EXCEPTION_STATE_COUNT \
 sizeof(struct x86_exception_state_t) / sizeof(uint32_t);
+
+#define EXPORT_SYMBOL_FLAGS_KIND_MASK 0x03
+#define EXPORT_SYMBOL_FLAGS_KIND_REGULAR 0x00
+#define EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL 0x01
+#define EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE 0x02
+#define EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION 0x04
+#define EXPORT_SYMBOL_FLAGS_REEXPORT 0x08
+#define EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER 0x10
 
 #endif

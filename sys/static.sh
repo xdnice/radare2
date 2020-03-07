@@ -1,5 +1,7 @@
 #!/bin/sh
 
+[ -z "${STATIC_BINS}" ] && STATIC_BINS=0
+
 case "$(uname)" in
 Linux)
 	LDFLAGS="${LDFLAGS} -lpthread -ldl -lutil -lm"
@@ -36,7 +38,8 @@ if [ 1 = "${DOCFG}" ]; then
 	#cp -f plugins.static.cfg plugins.cfg
 	cp -f plugins.static.nogpl.cfg plugins.cfg
 	./configure-plugins || exit 1
-	./configure --prefix="$PREFIX" --without-gpl --with-libr --without-libuv --disable-loadlibs || exit 1
+	#./configure --prefix="$PREFIX" --without-gpl --with-libr --without-libuv --disable-loadlibs || exit 1
+	./configure --prefix="$PREFIX" --without-gpl --with-libr --without-libuv || exit 1
 fi
 ${MAKE} -j 8 || exit 1
 BINS="rarun2 rasm2 radare2 ragg2 rabin2 rax2 rahash2 rafind2 r2agent radiff2"
@@ -45,8 +48,15 @@ for a in ${BINS} ; do
 (
 	cd binr/$a
 	${MAKE} clean
-	#LDFLAGS=-static ${MAKE} -j2
-	${MAKE} -j4 || exit 1
+	if [ "`uname`" = Darwin ]; then
+		${MAKE} -j4 || exit 1
+	else
+		if [ "${STATIC_BINS}" = 1 ]; then
+			CFLAGS=-static LDFLAGS=-static ${MAKE} -j4 || exit 1
+		else
+			${MAKE} -j4 || exit 1
+		fi
+	fi
 )
 done
 

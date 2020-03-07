@@ -1,9 +1,11 @@
-files = [
+r_asm_sources = [
   'asm.c',
   'op.c',
   'code.c',
   'p/asm_6502.c',
+  'p/asm_6502_cs.c',
   'p/asm_8051.c',
+  'p/asm_amd29k.c',
   'p/asm_arc.c',
   'p/asm_arm_as.c',
   'p/asm_arm_cs.c',
@@ -30,12 +32,14 @@ files = [
   'p/asm_lh5801.c',
   'p/asm_lm32.c',
   'p/asm_m68k_cs.c',
+  'p/asm_m680x_cs.c',
   'p/asm_malbolge.c',
   'p/asm_mcs96.c',
   'p/asm_mips_cs.c',
   'p/asm_mips_gnu.c',
   'p/asm_msp430.c',
   'p/asm_nios2.c',
+  'p/asm_or1k.c',
   'p/asm_pic.c',
   'p/asm_mcore.c',
   'p/asm_ppc_cs.c',
@@ -67,7 +71,9 @@ files = [
   'p/asm_xtensa.c',
   'p/asm_z80.c',
   #'arch/6502/6502dis.c',
-  'arch/8051/8051_disas.c',
+  'arch/amd29k/amd29k.c',
+  #'arch/8051/8051_disas.c',
+  'arch/8051/8051_ass.c',
   'arch/arc/gnu/arc-dis.c',
   'arch/arc/gnu/arc-ext.c',
   'arch/arc/gnu/arc-opc.c',
@@ -110,6 +116,7 @@ files = [
   'arch/msp430/msp430_disas.c',
   'arch/nios/gnu/nios2-dis.c',
   'arch/nios/gnu/nios2-opc.c',
+  'arch/or1k/or1k_disas.c',
   'arch/pic/pic_baseline.c',
   'arch/pic/pic_midrange.c',
   'arch/pic/pic_pic18.c',
@@ -169,11 +176,12 @@ r_asm_inc = [
     'arch/ebc',
     'arch/cr16',
     'arch/8051',
-    'arch/v810'
+    'arch/v810',
+    'arch/or1k'
   )
 ]
 
-r_asm = library('r_asm', files,
+r_asm = library('r_asm', r_asm_sources,
   include_directories: r_asm_inc,
   c_args: library_cflags,
   dependencies: [
@@ -195,8 +203,7 @@ r_asm = library('r_asm', files,
 r_asm_dep = declare_dependency(link_with: r_asm,
                                include_directories: r_asm_inc)
 
-pkgconfig_mod.generate(
-  libraries: [r_asm],
+pkgconfig_mod.generate(r_asm,
   subdirs: 'libr',
   version: r2_version,
   name: 'r_asm',

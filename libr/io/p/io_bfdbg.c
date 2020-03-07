@@ -11,6 +11,7 @@
 #include "../debug/p/bfvm.c"
 
 typedef struct {
+	ut32 magic;
 	int fd;
 	ut8 *buf;
 	ut32 size;
@@ -132,10 +133,8 @@ static int __close(RIODesc *fd) {
 	}
 	riom = fd->data;
 	bfvm_free (riom->bfvm);
-	free (riom->buf);
-	riom->buf = NULL;
-	free (fd->data);
-	fd->data = NULL;
+	R_FREE (riom->buf);
+	R_FREE (fd->data);
 	return 0;
 }
 
@@ -196,8 +195,9 @@ static RIODesc *__open(RIO *io, const char *pathname, int rw, int mode) {
 
 RIOPlugin r_io_plugin_bfdbg = {
 	.name = "bfdbg",
-	.desc = "BrainFuck Debugger (bfdbg://path/to/file)",
+	.desc = "Attach to brainFuck Debugger instance",
 	.license = "LGPL3",
+	.uris = "bfdbg://",
 	.open = __open,
 	.close = __close,
 	.read = __read,
@@ -206,7 +206,7 @@ RIOPlugin r_io_plugin_bfdbg = {
 	.write = __write,
 };
 
-#ifndef CORELIB
+#ifndef R2_PLUGIN_INCORE
 R_API RLibStruct radare_plugin = {
 	.type = R_LIB_TYPE_IO,
 	.data = &r_io_plugin_bfdbg,

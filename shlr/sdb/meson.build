@@ -1,37 +1,49 @@
-project('sdb', 'c', meson_version: '>=0.46.0')
-py3_exe = import('python3').find_python()
+project('sdb', 'c', meson_version: '>=0.47.0')
+py3_exe = import('python').find_installation('python3')
+pkgconfig_mod = import('pkgconfig')
 
-version_cmd = 'import sys; l=open("config.mk").read().split("\\n"); print(next(filter(lambda x: "SDBVER=" in x, l)).split("=")[1])'
-sdb_version = run_command(py3_exe, '-c', version_cmd)
-if sdb_version.returncode() == 0
-  sdb_version = sdb_version.stdout().strip()
+version_cmd = '''from sys import argv
+with open(argv[1]) as fd:
+  for line in fd:
+    if line.startswith('SDBVER='):
+      version_tuple = line.split('=')[1]
+      print(version_tuple)
+      break
+'''
+sdb_version = '0.0.1'
+config_mk = files('config.mk')[0]
+r = run_command(py3_exe, '-c', version_cmd, config_mk)
+if r.returncode() == 0
+  sdb_version = r.stdout().strip()
 else
-  sdb_version = '0.0.1'
+  warning('Cannot determine SDB version')
 endif
 message('SDB version = ' + sdb_version)
 sdb_libversion = host_machine.system() == 'windows' ? '' : sdb_version
 
-sdb_platform_inc = []
-if host_machine.system() == 'windows'
-  sdb_platform_inc = include_directories('msvc')
-endif
-
 # Create sdb_version.h
-sdb_version_path = join_paths(meson.current_build_dir(), 'sdb_version.h')
-run_command(py3_exe, '-c', 'with open("@0@", "w") as f: f.write("#define SDB_VERSION \"@1@\"")'.format(sdb_version_path, sdb_version))
+conf_data = configuration_data()
+conf_data.set_quoted('SDB_VERSION', sdb_version, description : 'From config.mk')
+configure_file(
+  output : 'sdb_version.h',
+  configuration : conf_data,
+  install_dir : join_paths(get_option('includedir'), 'sdb')
+)
 
-glob_cmd = [py3_exe, '-c', 'from sys import argv; print(";".join(__import__("glob").glob(argv[1])))']
-
-files = [
+libsdb_sources = [
   'src/array.c',
+  'src/set.c',
   'src/base64.c',
   'src/buffer.c',
   'src/cdb.c',
   'src/cdb_make.c',
   'src/dict.c',
+  'src/diff.c',
   'src/disk.c',
   'src/fmt.c',
-  'src/ht.c',
+  'src/ht_uu.c',
+  'src/ht_pp.c',
+  'src/ht_up.c',
   'src/journal.c',
   'src/json.c',
   #'src/json/api.c',
@@ -50,12 +62,9 @@ files = [
   'src/util.c',
 ]
 
-sdb_inc = [
-  sdb_platform_inc,
-  include_directories(['.', 'src'])
-]
+sdb_inc = include_directories(['.', 'src'])
 
-libsdb = both_libraries('sdb', files,
+libsdb = both_libraries('libsdb', libsdb_sources,
   include_directories: sdb_inc,
   implicit_include_directories: false,
   soversion: sdb_libversion,
@@ -68,7 +77,21 @@ if meson.is_subproject()
     include_directories: sdb_inc
   )
 else
-  include_files = run_command(glob_cmd + ['src/*.h']).stdout().strip().split(';') + [sdb_version_path]
+  include_files = [
+    'src/buffer.h',
+    'src/cdb.h',
+    'src/cdb_make.h',
+    'src/config.h',
+    'src/dict.h',
+    'src/ht_inc.h',
+    'src/ht_pp.h',
+    'src/ht_up.h',
+    'src/ht_uu.h',
+    'src/ls.h',
+    'src/sdb.h',
+    'src/sdbht.h',
+    'src/types.h'
+  ]
   install_headers(include_files, subdir: 'sdb')
 endif
 
@@ -85,28 +108,30 @@ sdb_exe = executable('sdb', 'src/main.c',
   implicit_include_directories: false
 )
 
-sdb_gen_cmd = [
-  py3_exe,
-  '-c',
-  'from sys import argv; __import__("os").system("@0@ %s = <%s" % (argv[1], argv[2]))'.format(sdb_exe.full_path()),
-  '@OUTPUT@',
-  '@INPUT@'
-]
+if not meson.is_subproject()
+  install_man(['src/sdb.1'])
+endif
 
-pkgconfig_mod = import('pkgconfig')
 pkgconfig_mod.generate(
-  libraries: [libsdb.get_shared_lib()],
-  subdirs: ['sdb', '.'],
-  version: sdb_version,
   name: 'sdb',
   filebase: 'sdb',
-  description: 'Simple DataBase'
+  libraries: [libsdb.get_shared_lib()],
+  description: 'Simple DataBase',
+  subdirs: ['sdb', '.'],
+  version: sdb_version,
+  url: 'https://github.com/radareorg/sdb'
 )
 
-make_test_executable = find_program('make')
-test('run tests', make_test_executable,
-  args: 'test',
-  env: ['BASEDIR=' + meson.current_build_dir()],
-  workdir: join_paths(meson.current_build_dir(), '..'),
-  depends: [sdb_exe, libsdb]
-)
+if not meson.is_subproject()
+  make_exe = find_program('make', required: false)
+  if make_exe.found()
+    test('run tests', make_exe,
+      args: 'test',
+      env: ['BASEDIR=' + meson.current_build_dir()],
+      workdir: join_paths(meson.current_build_dir(), '..'),
+      depends: [sdb_exe, libsdb]
+    )
+  endif
+
+  subdir('test/bench')
+endif

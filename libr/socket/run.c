@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include <r_socket.h>
 #include <r_util.h>
@@ -48,6 +47,7 @@
 #if defined(__APPLE__) || defined(__NetBSD__) || defined(__OpenBSD__)
 #include <util.h>
 #elif defined(__FreeBSD__) || defined(__DragonFly__)
+#include <sys/sysctl.h>
 #include <libutil.h>
 #endif
 #endif
@@ -86,7 +86,7 @@ R_API bool r_run_parse(RRunProfile *pf, const char *profile) {
 		return false;
 	}
 	r_str_replace_char (str, '\r',0);
-	for (o = p = str; (o = strchr (p, '\n')); p = o) {
+	for (p = str; (o = strchr (p, '\n')); p = o) {
 		*o++ = 0;
 		r_run_parseline (pf, p);
 	}
@@ -185,7 +185,8 @@ static char *getstr(const char *src) {
 		int msg_len = strlen (msg);
 		if (msg_len > 0) {
 			msg [msg_len - 1] = 0;
-			char *ret = r_str_trim_tail (r_sys_cmd_str (msg, NULL, NULL));
+			char *ret = r_sys_cmd_str (msg, NULL, NULL);
+			r_str_trim_tail (ret);
 			free (msg);
 			return ret;
 		}
@@ -193,10 +194,15 @@ static char *getstr(const char *src) {
 		return strdup ("");
 		}
 	case '!':
-		return r_str_trim_tail (r_sys_cmd_str (src + 1, NULL, NULL));
+		{
+		char *a = r_sys_cmd_str (src + 1, NULL, NULL);
+		r_str_trim_tail (a);
+		return a;
+		}
 	case ':':
 		if (src[1] == '!') {
-			ret = r_str_trim_tail (r_sys_cmd_str (src + 1, NULL, NULL));
+			ret = r_sys_cmd_str (src + 1, NULL, NULL);
+			r_str_trim_tail (ret); // why no head :?
 		} else {
 			ret = strdup (src);
 		}
@@ -226,33 +232,17 @@ static int parseBool(const char *e) {
 		0: 1): 1): 1): 1);
 }
 
-#if __linux__
-#define RVAS "/proc/sys/kernel/randomize_va_space"
-static void setRVA(const char *v) {
-	int fd = open (RVAS, O_WRONLY);
-	if (fd != -1) {
-		write (fd, v, 2);
-		close (fd);
-	}
-}
-#endif
-
 // TODO: move into r_util? r_run_... ? with the rest of funcs?
 static void setASLR(RRunProfile *r, int enabled) {
 #if __linux__
-	if (enabled) {
-		setRVA ("2\n");
-	} else {
-#if __ANDROID__
-		setRVA ("0\n");
-#else
-#if HAVE_DECL_ADDR_NO_RANDOMIZE
-		if (personality (ADDR_NO_RANDOMIZE) == -1) {
+	r_sys_aslr (enabled);
+#if HAVE_DECL_ADDR_NO_RANDOMIZE && !__ANDROID__
+	if (personality (ADDR_NO_RANDOMIZE) == -1) {
 #endif
-			setRVA ("0\n");
-		}
-#endif
+		r_sys_aslr (0);
+#if HAVE_DECL_ADDR_NO_RANDOMIZE && !__ANDROID__
 	}
+#endif
 #elif __APPLE__
 	// TOO OLD setenv ("DYLD_NO_PIE", "1", 1);
 	// disable this because its
@@ -266,6 +256,8 @@ static void setASLR(RRunProfile *r, int enabled) {
 	// for osxver>=10.7
 	// "unset the MH_PIE bit in an already linked executable" with --no-pie flag of the script
 	// the right way is to disable the aslr bit in the spawn call
+#elif __FreeBSD__
+	r_sys_aslr (enabled);
 #else
 	// not supported for this platform
 #endif
@@ -378,8 +370,17 @@ static int handle_redirection(const char *cmd, bool in, bool out, bool err) {
 		if (in) {
 			int pipes[2];
 			if (pipe (pipes) != -1) {
-				write (pipes[1], cmd + 1, strlen (cmd)-2);
-				write (pipes[1], "\n", 1);
+				size_t cmdl = strlen (cmd)-2;
+				if (write (pipes[1], cmd + 1, cmdl) != cmdl) {
+					eprintf ("[ERROR] rarun2: Cannot write to the pipe\n");
+					close (0);
+					return 1;
+				}
+				if (write (pipes[1], "\n", 1) != 1) {
+					eprintf ("[ERROR] rarun2: Cannot write to the pipe\n");
+					close (0);
+					return 1;
+				}
 				close (0);
 				dup2 (pipes[0], 0);
 			} else {
@@ -539,7 +540,7 @@ R_API bool r_run_parseline(RRunProfile *p, char *b) {
 	} else if (!strcmp (b, "envfile")) {
 		char *p, buf[1024];
 		size_t len;
-		FILE *fd = fopen (e, "r");
+		FILE *fd = r_sandbox_fopen (e, "r");
 		if (!fd) {
 			eprintf ("Cannot open '%s'\n", e);
 			if (must_free == true) {
@@ -548,18 +549,20 @@ R_API bool r_run_parseline(RRunProfile *p, char *b) {
 			return false;
 		}
 		for (;;) {
-			fgets (buf, sizeof (buf) - 1, fd);
+			if (!fgets (buf, sizeof (buf), fd)) {
+				break;
+			}
 			if (feof (fd)) {
 				break;
 			}
 			p = strchr (buf, '=');
 			if (p) {
 				*p++ = 0;
-				len = strlen(p);
-				if (p[len - 1] == '\n') {
+				len = strlen (p);
+				if (len > 0 && p[len - 1] == '\n') {
 					p[len - 1] = 0;
 				}
-				if (p[len - 2] == '\r') {
+				if (len > 1 && p[len - 2] == '\r') {
 					p[len - 2] = 0;
 				}
 				r_sys_setenv (buf, p);
@@ -882,7 +885,11 @@ R_API int r_run_config_env(RRunProfile *p) {
 				eprintf ("Cannot chroot to %s\n", p->_chroot);
 				return 1;
 			} else {
-				(void) chdir ("/");
+				// Silenting pedantic meson flags...
+				if (chdir ("/") == -1) {
+					eprintf ("Cannot chdir to /\n");
+					return 1;
+				}
 				if (p->_chgdir) {
 					if (chdir (p->_chgdir) == -1) {
 						eprintf ("Cannot chdir after chroot to %s\n", p->_chgdir);
@@ -937,12 +944,19 @@ R_API int r_run_config_env(RRunProfile *p) {
 	if (p->_input) {
 		char *inp;
 		int f2[2];
-		pipe (f2);
-		close (0);
-		dup2 (f2[0], 0);
+		if (pipe (f2) != -1) {
+			close (0);
+			dup2 (f2[0], 0);
+		} else {
+			eprintf ("[ERROR] rarun2: Cannot create pipe\n");
+			return 1;
+		}
 		inp = getstr (p->_input);
 		if (inp) {
-			write (f2[1], inp, strlen (inp));
+			size_t inpl = strlen (inp);
+			if  (write (f2[1], inp, inpl) != inpl) {
+				eprintf ("[ERROR] rarun2: Cannot write to the pipe\n");
+			}
 			close (f2[1]);
 			free (inp);
 		} else {
@@ -954,7 +968,11 @@ R_API int r_run_config_env(RRunProfile *p) {
 		if (p->_preload) {
 			eprintf ("WARNING: Only one library can be opened at a time\n");
 		}
-		p->_preload = R2_LIBDIR"/libr2."R_LIB_EXT;
+#ifdef __WINDOWS__
+		p->_preload = r_str_r2_prefix (R_JOIN_2_PATHS (R2_LIBDIR, "libr2."R_LIB_EXT));
+#else
+		p->_preload = strdup (R2_LIBDIR"/libr2."R_LIB_EXT);
+#endif
 	}
 	if (p->_libpath) {
 #if __WINDOWS__
